@@ -35,6 +35,7 @@ import io.zeebe.protocol.intent.WorkflowInstanceIntent;
 import io.zeebe.protocol.intent.WorkflowInstanceSubscriptionIntent;
 import io.zeebe.test.broker.protocol.clientapi.ClientApiRule;
 import io.zeebe.test.broker.protocol.clientapi.PartitionTestClient;
+import io.zeebe.test.util.JsonUtil;
 import io.zeebe.test.util.MsgPackUtil;
 import io.zeebe.util.buffer.BufferUtil;
 import java.util.Arrays;
@@ -271,21 +272,17 @@ public class EmbeddedSubProcessTest {
             .endEvent()
             .done();
 
-    final byte[] payload = BufferUtil.bufferAsArray(MsgPackUtil.asMsgPack("key", "val"));
-    final byte[] expectedMappedPayload =
-        BufferUtil.bufferAsArray(MsgPackUtil.asMsgPack("mappedKey", "val"));
-
     testClient.deploy(model);
     testClient.createWorkflowInstance(PROCESS_ID);
 
     // when
-    testClient.completeJobOfType("type", payload);
+    testClient.completeJobOfType("type", "{'key': 'val'}");
 
     // then
     final Record<WorkflowInstanceRecordValue> instanceCompletedEvent =
         testClient.receiveElementInState(PROCESS_ID, WorkflowInstanceIntent.ELEMENT_COMPLETED);
-    MsgPackUtil.assertEquality(
-        expectedMappedPayload, instanceCompletedEvent.getValue().getPayload());
+    JsonUtil.assertEquality(
+        instanceCompletedEvent.getValue().getPayload(), "{'key': 'val', 'mappedKey': 'val'}");
   }
 
   @Test
@@ -304,24 +301,18 @@ public class EmbeddedSubProcessTest {
             .endEvent()
             .done();
 
-    final byte[] payload = BufferUtil.bufferAsArray(MsgPackUtil.asMsgPack("key", "val"));
-    final byte[] otherPayload = BufferUtil.bufferAsArray(MsgPackUtil.asMsgPack("foo", "val2"));
-
-    final byte[] expectedMappedPayload =
-        BufferUtil.bufferAsArray(MsgPackUtil.asMsgPack("key", "val2"));
-
     testClient.deploy(model);
-    testClient.createWorkflowInstance(PROCESS_ID, payload);
+    testClient.createWorkflowInstance(PROCESS_ID, "{'key': 'val'}");
 
     // when
-    testClient.completeJobOfType("type", otherPayload);
+    testClient.completeJobOfType("type", "{'foo': 'val2'}");
 
     // then
     final Record<WorkflowInstanceRecordValue> instanceCompletedEvent =
         testClient.receiveElementInState(PROCESS_ID, WorkflowInstanceIntent.ELEMENT_COMPLETED);
 
-    MsgPackUtil.assertEquality(
-        expectedMappedPayload, instanceCompletedEvent.getValue().getPayload());
+    JsonUtil.assertEquality(
+        instanceCompletedEvent.getValue().getPayload(), "{'key': 'val2', 'foo': 'val2'}");
   }
 
   @Test

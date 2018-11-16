@@ -58,6 +58,19 @@ public final class JobCompletedEventProcessor implements TypedRecordProcessor<Jo
       elementInstance.setState(WorkflowInstanceIntent.ELEMENT_COMPLETING);
       elementInstance.setJobKey(-1);
       elementInstance.setValue(value);
+
+      // remove any input-mapped variables, so they don't leak out on output mapping
+      workflowState
+          .getElementInstanceState()
+          .getVariablesState()
+          .removeAllVariables(elementInstanceKey);
+
+      workflowState
+          .getElementInstanceState()
+          .getVariablesState()
+          .setVariablesLocalFromDocument(elementInstanceKey, jobEvent.getPayload());
+
+      workflowState.getElementInstanceState().flushDirtyState();
     }
   }
 }
