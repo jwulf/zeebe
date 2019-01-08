@@ -156,11 +156,14 @@ public class VariablesState {
 
         final boolean hasVariable =
             hasVariableLocal(
-                scopeKey, document, entryIterator.getNameOffset(), entryIterator.getNameLength());
+                currentScope,
+                document,
+                entryIterator.getNameOffset(),
+                entryIterator.getNameLength());
 
         if (hasVariable) {
           setVariableLocal(
-              scopeKey,
+              currentScope,
               document,
               entryIterator.getNameOffset(),
               entryIterator.getNameLength(),

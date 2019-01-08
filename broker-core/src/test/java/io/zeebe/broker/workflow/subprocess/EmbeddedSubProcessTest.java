@@ -242,19 +242,16 @@ public class EmbeddedSubProcessTest {
             .endEvent()
             .done();
 
-    final byte[] payload = BufferUtil.bufferAsArray(MsgPackUtil.asMsgPack("key", "val"));
-    final byte[] expectedMappedPayload =
-        BufferUtil.bufferAsArray(MsgPackUtil.asMsgPack("mappedKey", "val"));
-
     testClient.deploy(model);
 
     // when
-    testClient.createWorkflowInstance(PROCESS_ID, payload);
+    testClient.createWorkflowInstance(PROCESS_ID, "{'key':'val'}");
 
     // then
     final Record<JobRecordValue> jobCreatedEvent =
         testClient.receiveFirstJobEvent(JobIntent.CREATED);
-    MsgPackUtil.assertEquality(expectedMappedPayload, jobCreatedEvent.getValue().getPayload());
+    JsonUtil.assertEquality(
+        jobCreatedEvent.getValue().getPayload(), "{'key':'val', 'mappedKey':'val'}");
   }
 
   @Test
