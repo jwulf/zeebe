@@ -41,12 +41,17 @@ public class IOMappingHelper {
             .getVariablesAsDocument(record.getScopeInstanceKey());
     mergeTool.reset();
 
+    // TODO (saig0) #1613: if the activity has no output mappings then we don't need to propagate
+    // the variables
+
     final DirectBuffer propagatedPayload;
     if (outputBehavior != ZeebeOutputBehavior.none) {
       if (element.getOutputBehavior() != ZeebeOutputBehavior.overwrite) {
         mergeTool.mergeDocument(scopePayload);
       }
 
+      // TODO (saig0) #1613: we should use the variables from the state instead of the record
+      // payload
       mergeTool.mergeDocumentStrictly(record.getPayload(), element.getOutputMappings());
       propagatedPayload = mergeTool.writeResultToBuffer();
 
@@ -71,7 +76,11 @@ public class IOMappingHelper {
 
     if (mappings.length > 0) {
       mergeTool.reset();
+
+      // TODO (saig0) #1612: we should use the variables from the state instead of the record
+      // payload
       mergeTool.mergeDocumentStrictly(value.getPayload(), element.getInputMappings());
+
       final DirectBuffer mappedPayload = mergeTool.writeResultToBuffer();
       context.getValue().setPayload(mappedPayload);
 

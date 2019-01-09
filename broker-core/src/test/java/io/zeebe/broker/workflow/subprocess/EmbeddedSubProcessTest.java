@@ -308,8 +308,7 @@ public class EmbeddedSubProcessTest {
     final Record<WorkflowInstanceRecordValue> instanceCompletedEvent =
         testClient.receiveElementInState(PROCESS_ID, WorkflowInstanceIntent.ELEMENT_COMPLETED);
 
-    JsonUtil.assertEquality(
-        instanceCompletedEvent.getValue().getPayload(), "{'key': 'val2', 'foo': 'val2'}");
+    JsonUtil.assertEquality(instanceCompletedEvent.getValue().getPayload(), "{'key': 'val2'}");
   }
 
   @Test

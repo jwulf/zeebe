@@ -172,8 +172,6 @@ public class VariablesState {
 
           entryIterator.remove();
         }
-
-        currentScope = parentScope;
       }
       currentScope = parentScope;
     }
