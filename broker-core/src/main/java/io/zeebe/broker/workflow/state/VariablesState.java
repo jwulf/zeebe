@@ -28,7 +28,6 @@ import io.zeebe.msgpack.spec.MsgPackToken;
 import io.zeebe.msgpack.spec.MsgPackWriter;
 import java.util.Collection;
 import java.util.Iterator;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
@@ -334,21 +333,7 @@ public class VariablesState {
   }
 
   public boolean isEmpty() {
-    final AtomicBoolean isEmpty = new AtomicBoolean(true);
-
-    variablesColumnFamily.whileTrue(
-        (k, v) -> {
-          isEmpty.compareAndSet(true, false);
-          return false;
-        });
-
-    childParentColumnFamily.whileTrue(
-        (k, v) -> {
-          isEmpty.compareAndSet(true, false);
-          return false;
-        });
-
-    return isEmpty.get();
+    return variablesColumnFamily.isEmpty() && childParentColumnFamily.isEmpty();
   }
 
   private class IndexedDocument implements Iterable<Void> {
