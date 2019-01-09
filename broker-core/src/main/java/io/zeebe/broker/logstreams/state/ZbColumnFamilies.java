@@ -34,8 +34,8 @@ public enum ZbColumnFamilies {
   // element instance
   ELEMENT_INSTANCE_PARENT_CHILD,
   ELEMENT_INSTANCE_KEY,
-  TOKEN_EVENTS,
-  TOKEN_PARENT_CHILD,
+  RECORDS,
+  RECORD_PARENT_CHILD,
 
   // variable state
   ELEMENT_INSTANCE_CHILD_PARENT,
