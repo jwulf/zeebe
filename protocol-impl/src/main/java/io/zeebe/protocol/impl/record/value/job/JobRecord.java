@@ -24,16 +24,17 @@ import io.zeebe.msgpack.property.PackedProperty;
 import io.zeebe.msgpack.property.StringProperty;
 import io.zeebe.msgpack.spec.MsgPackHelper;
 import io.zeebe.protocol.Protocol;
+import io.zeebe.protocol.WorkflowInstanceRelated;
 import org.agrona.DirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
 
-public class JobRecord extends UnpackedObject {
+public class JobRecord extends UnpackedObject implements WorkflowInstanceRelated {
   public static final DirectBuffer NO_HEADERS = new UnsafeBuffer(MsgPackHelper.EMTPY_OBJECT);
 
   public static final String RETRIES = "retries";
   public static final String TYPE = "type";
   public static final String CUSTOM_HEADERS = "customHeaders";
-  public static final String PAYLOAD = "payload";
+  public static final String VARIABLES = "variables";
   public static final String ERROR_MESSAGE = "errorMessage";
 
   private final LongProperty deadlineProp =
@@ -44,7 +45,7 @@ public class JobRecord extends UnpackedObject {
   private final ObjectProperty<JobHeaders> headersProp =
       new ObjectProperty<>("headers", new JobHeaders());
   private final PackedProperty customHeadersProp = new PackedProperty(CUSTOM_HEADERS, NO_HEADERS);
-  private final DocumentProperty payloadProp = new DocumentProperty(PAYLOAD);
+  private final DocumentProperty variableProp = new DocumentProperty(VARIABLES);
   private final StringProperty errorMessageProp = new StringProperty(ERROR_MESSAGE, "");
 
   public JobRecord() {
@@ -54,7 +55,7 @@ public class JobRecord extends UnpackedObject {
         .declareProperty(typeProp)
         .declareProperty(headersProp)
         .declareProperty(customHeadersProp)
-        .declareProperty(payloadProp)
+        .declareProperty(variableProp)
         .declareProperty(errorMessageProp);
   }
 
@@ -112,13 +113,18 @@ public class JobRecord extends UnpackedObject {
     return this;
   }
 
-  public DirectBuffer getPayload() {
-    return payloadProp.getValue();
+  public DirectBuffer getVariables() {
+    return variableProp.getValue();
   }
 
-  public JobRecord setPayload(DirectBuffer payload) {
-    payloadProp.setValue(payload);
+  public JobRecord setVariables(DirectBuffer variables) {
+    variableProp.setValue(variables);
 
+    return this;
+  }
+
+  public JobRecord resetVariables() {
+    variableProp.reset();
     return this;
   }
 
@@ -155,5 +161,10 @@ public class JobRecord extends UnpackedObject {
   public JobRecord setErrorMessage(DirectBuffer buf, int offset, int length) {
     errorMessageProp.setValue(buf, offset, length);
     return this;
+  }
+
+  @Override
+  public long getWorkflowInstanceKey() {
+    return headersProp.getValue().getWorkflowInstanceKey();
   }
 }

@@ -17,6 +17,7 @@ package io.zeebe.protocol.impl.record.value.job;
 
 import io.zeebe.msgpack.UnpackedObject;
 import io.zeebe.msgpack.property.ArrayProperty;
+import io.zeebe.msgpack.property.BooleanProperty;
 import io.zeebe.msgpack.property.IntegerProperty;
 import io.zeebe.msgpack.property.LongProperty;
 import io.zeebe.msgpack.property.StringProperty;
@@ -31,21 +32,23 @@ public class JobBatchRecord extends UnpackedObject {
   private final StringProperty typeProp = new StringProperty("type");
   private final StringProperty workerProp = new StringProperty("worker", "");
   private final LongProperty timeoutProp = new LongProperty("timeout", Protocol.INSTANT_NULL_VALUE);
-  private final IntegerProperty amountProp = new IntegerProperty("amount", 1);
+  private final IntegerProperty maxJobsToActivateProp = new IntegerProperty("maxJobsToActivate", 1);
   private final ArrayProperty<LongValue> jobKeysProp =
       new ArrayProperty<>("jobKeys", new LongValue());
   private final ArrayProperty<JobRecord> jobsProp = new ArrayProperty<>("jobs", new JobRecord());
   private final ArrayProperty<StringValue> variablesProp =
       new ArrayProperty<>("variables", new StringValue());
+  private final BooleanProperty truncatedProp = new BooleanProperty("truncated", false);
 
   public JobBatchRecord() {
     this.declareProperty(typeProp)
         .declareProperty(workerProp)
         .declareProperty(timeoutProp)
-        .declareProperty(amountProp)
+        .declareProperty(maxJobsToActivateProp)
         .declareProperty(jobKeysProp)
         .declareProperty(jobsProp)
-        .declareProperty(variablesProp);
+        .declareProperty(variablesProp)
+        .declareProperty(truncatedProp);
   }
 
   public DirectBuffer getType() {
@@ -95,12 +98,12 @@ public class JobBatchRecord extends UnpackedObject {
     return this;
   }
 
-  public int getAmount() {
-    return amountProp.getValue();
+  public int getMaxJobsToActivate() {
+    return maxJobsToActivateProp.getValue();
   }
 
-  public JobBatchRecord setAmount(int amount) {
-    amountProp.setValue(amount);
+  public JobBatchRecord setMaxJobsToActivate(int maxJobsToActivate) {
+    maxJobsToActivateProp.setValue(maxJobsToActivate);
     return this;
   }
 
@@ -114,5 +117,14 @@ public class JobBatchRecord extends UnpackedObject {
 
   public ValueArray<StringValue> variables() {
     return variablesProp;
+  }
+
+  public JobBatchRecord setTruncated(boolean truncated) {
+    truncatedProp.setValue(truncated);
+    return this;
+  }
+
+  public boolean getTruncated() {
+    return truncatedProp.getValue();
   }
 }

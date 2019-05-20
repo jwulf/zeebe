@@ -30,6 +30,7 @@ public class JsonPathQuery {
       new MsgPackFilterContext(MAX_DEPTH, MAX_FILTER_CONTEXT_LENGTH);
 
   protected UnsafeBuffer expressionBuffer = new UnsafeBuffer(0, 0);
+  protected DirectBuffer variableName = new UnsafeBuffer(0, 0);
 
   protected int invalidPosition;
   protected String errorMessage;
@@ -72,5 +73,13 @@ public class JsonPathQuery {
 
   public DirectBuffer getExpression() {
     return expressionBuffer;
+  }
+
+  public DirectBuffer getVariableName() {
+    return variableName;
+  }
+
+  public void setVariableName(byte[] topLevelVariable) {
+    this.variableName.wrap(topLevelVariable);
   }
 }

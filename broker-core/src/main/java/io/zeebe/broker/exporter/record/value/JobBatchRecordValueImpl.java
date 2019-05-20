@@ -19,8 +19,8 @@ package io.zeebe.broker.exporter.record.value;
 
 import io.zeebe.broker.exporter.ExporterObjectMapper;
 import io.zeebe.broker.exporter.record.RecordValueImpl;
-import io.zeebe.exporter.record.value.JobBatchRecordValue;
-import io.zeebe.exporter.record.value.JobRecordValue;
+import io.zeebe.exporter.api.record.value.JobBatchRecordValue;
+import io.zeebe.exporter.api.record.value.JobRecordValue;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -29,25 +29,28 @@ public class JobBatchRecordValueImpl extends RecordValueImpl implements JobBatch
   private final String type;
   private final String worker;
   private final Duration timeout;
-  private final int amount;
+  private final int maxJobsToActivate;
   private final List<Long> jobKeys;
   private final List<JobRecordValue> jobs;
+  private final boolean truncated;
 
   public JobBatchRecordValueImpl(
       final ExporterObjectMapper objectMapper,
       final String type,
       final String worker,
       final Duration timeout,
-      final int amount,
+      final int maxJobsToActivate,
       final List<Long> jobKeys,
-      final List<JobRecordValue> jobs) {
+      final List<JobRecordValue> jobs,
+      boolean truncated) {
     super(objectMapper);
     this.type = type;
     this.worker = worker;
     this.timeout = timeout;
-    this.amount = amount;
+    this.maxJobsToActivate = maxJobsToActivate;
     this.jobKeys = jobKeys;
     this.jobs = jobs;
+    this.truncated = truncated;
   }
 
   @Override
@@ -66,8 +69,8 @@ public class JobBatchRecordValueImpl extends RecordValueImpl implements JobBatch
   }
 
   @Override
-  public int getAmount() {
-    return amount;
+  public int getMaxJobsToActivate() {
+    return maxJobsToActivate;
   }
 
   @Override
@@ -81,6 +84,11 @@ public class JobBatchRecordValueImpl extends RecordValueImpl implements JobBatch
   }
 
   @Override
+  public boolean isTruncated() {
+    return truncated;
+  }
+
+  @Override
   public boolean equals(Object o) {
     if (this == o) {
       return true;
@@ -89,17 +97,18 @@ public class JobBatchRecordValueImpl extends RecordValueImpl implements JobBatch
       return false;
     }
     final JobBatchRecordValueImpl that = (JobBatchRecordValueImpl) o;
-    return amount == that.amount
+    return maxJobsToActivate == that.maxJobsToActivate
         && Objects.equals(type, that.type)
         && Objects.equals(worker, that.worker)
         && Objects.equals(timeout, that.timeout)
         && Objects.equals(jobKeys, that.jobKeys)
-        && Objects.equals(jobs, that.jobs);
+        && Objects.equals(jobs, that.jobs)
+        && truncated == that.truncated;
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(type, worker, timeout, amount, jobKeys, jobs);
+    return Objects.hash(type, worker, timeout, maxJobsToActivate, jobKeys, jobs, truncated);
   }
 
   @Override
@@ -108,13 +117,15 @@ public class JobBatchRecordValueImpl extends RecordValueImpl implements JobBatch
         + "type='"
         + type
         + '\''
+        + ", truncated="
+        + truncated
         + ", worker='"
         + worker
         + '\''
         + ", timeout="
         + timeout
-        + ", amount="
-        + amount
+        + ", maxJobsToActivate="
+        + maxJobsToActivate
         + ", jobKeys="
         + jobKeys
         + ", jobs="

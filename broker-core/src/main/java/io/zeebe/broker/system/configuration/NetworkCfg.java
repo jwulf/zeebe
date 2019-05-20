@@ -31,18 +31,14 @@ public class NetworkCfg implements ConfigurationEntry {
   private int portOffset = 0;
 
   private SocketBindingClientApiCfg client = new SocketBindingClientApiCfg();
-  private SocketBindingManagementCfg management = new SocketBindingManagementCfg();
-  private SocketBindingReplicationCfg replication = new SocketBindingReplicationCfg();
-  private SocketBindingSubscriptionCfg subscription = new SocketBindingSubscriptionCfg();
+  private SocketBindingAtomixCfg atomix = new SocketBindingAtomixCfg();
 
   @Override
   public void init(
       final BrokerCfg brokerCfg, final String brokerBase, final Environment environment) {
     applyEnvironment(environment);
     client.applyDefaults(this);
-    management.applyDefaults(this);
-    replication.applyDefaults(this);
-    subscription.applyDefaults(this);
+    atomix.applyDefaults(this);
   }
 
   private void applyEnvironment(final Environment environment) {
@@ -82,28 +78,12 @@ public class NetworkCfg implements ConfigurationEntry {
     this.client = clientApi;
   }
 
-  public SocketBindingManagementCfg getManagement() {
-    return management;
+  public SocketBindingAtomixCfg getAtomix() {
+    return atomix;
   }
 
-  public void setManagement(final SocketBindingManagementCfg managementApi) {
-    this.management = managementApi;
-  }
-
-  public SocketBindingReplicationCfg getReplication() {
-    return replication;
-  }
-
-  public void setReplication(final SocketBindingReplicationCfg replicationApi) {
-    this.replication = replicationApi;
-  }
-
-  public SocketBindingSubscriptionCfg getSubscription() {
-    return subscription;
-  }
-
-  public void setSubscription(final SocketBindingSubscriptionCfg subscription) {
-    this.subscription = subscription;
+  public void setAtomix(SocketBindingAtomixCfg atomix) {
+    this.atomix = atomix;
   }
 
   @Override
@@ -119,12 +99,6 @@ public class NetworkCfg implements ConfigurationEntry {
         + portOffset
         + ", client="
         + client
-        + ", management="
-        + management
-        + ", replication="
-        + replication
-        + ", subscription="
-        + subscription
         + '}';
   }
 }

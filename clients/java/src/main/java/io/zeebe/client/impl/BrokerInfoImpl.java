@@ -20,6 +20,7 @@ import io.zeebe.client.api.commands.PartitionBrokerRole;
 import io.zeebe.client.api.commands.PartitionInfo;
 import io.zeebe.gateway.protocol.GatewayOuterClass;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class BrokerInfoImpl implements BrokerInfo {
@@ -65,6 +66,21 @@ public class BrokerInfoImpl implements BrokerInfo {
     return this.partitions;
   }
 
+  @Override
+  public String toString() {
+    return "BrokerInfoImpl{"
+        + "nodeId="
+        + nodeId
+        + ", host='"
+        + host
+        + '\''
+        + ", port="
+        + port
+        + ", partitions="
+        + partitions
+        + '}';
+  }
+
   class PartitionInfoImpl implements PartitionInfo {
 
     private final int partitionId;
@@ -78,7 +94,10 @@ public class BrokerInfoImpl implements BrokerInfo {
       } else if (partition.getRole() == GatewayOuterClass.Partition.PartitionBrokerRole.FOLLOWER) {
         this.role = PartitionBrokerRole.FOLLOWER;
       } else {
-        throw new RuntimeException("unknown partition broker role");
+        throw new RuntimeException(
+            String.format(
+                "Unexpected partition broker role %s, should be one of %s",
+                partition.getRole(), Arrays.toString(PartitionBrokerRole.values())));
       }
     }
 
@@ -95,6 +114,11 @@ public class BrokerInfoImpl implements BrokerInfo {
     @Override
     public boolean isLeader() {
       return this.role == PartitionBrokerRole.LEADER;
+    }
+
+    @Override
+    public String toString() {
+      return "PartitionInfoImpl{" + "partitionId=" + partitionId + ", role=" + role + '}';
     }
   }
 }

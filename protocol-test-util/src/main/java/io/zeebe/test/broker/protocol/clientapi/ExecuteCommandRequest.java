@@ -33,6 +33,7 @@ import java.util.Map;
 import java.util.function.Predicate;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
+import org.agrona.concurrent.UnsafeBuffer;
 
 public class ExecuteCommandRequest implements BufferWriter {
   protected final MessageHeaderEncoder messageHeaderEncoder = new MessageHeaderEncoder();
@@ -81,6 +82,14 @@ public class ExecuteCommandRequest implements BufferWriter {
     return this;
   }
 
+  public ExecuteCommandRequest command(BufferWriter command) {
+    final int commandLength = command.getLength();
+    this.encodedCmd = new byte[commandLength];
+    command.write(new UnsafeBuffer(encodedCmd), 0);
+
+    return this;
+  }
+
   public ExecuteCommandRequest send() {
     return send(this::shouldRetryRequest);
   }
@@ -119,7 +128,7 @@ public class ExecuteCommandRequest implements BufferWriter {
     final ErrorResponse error = new ErrorResponse(msgPackHelper);
     try {
       error.wrap(responseBuffer, 0, responseBuffer.capacity());
-      return error.getErrorCode() == ErrorCode.PARTITION_NOT_FOUND;
+      return error.getErrorCode() == ErrorCode.PARTITION_LEADER_MISMATCH;
     } catch (final Exception e) {
       // ignore
       return false;

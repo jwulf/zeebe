@@ -19,9 +19,9 @@ package io.zeebe.broker.exporter.record;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.zeebe.broker.exporter.ExporterObjectMapper;
-import io.zeebe.exporter.record.Record;
-import io.zeebe.exporter.record.RecordMetadata;
-import io.zeebe.exporter.record.RecordValue;
+import io.zeebe.exporter.api.record.Record;
+import io.zeebe.exporter.api.record.RecordMetadata;
+import io.zeebe.exporter.api.record.RecordValue;
 import io.zeebe.logstreams.log.LoggedEvent;
 import java.time.Instant;
 
@@ -29,7 +29,6 @@ public class RecordImpl<T extends RecordValue> implements Record<T> {
   private final long key;
   private final long position;
   private final Instant timestamp;
-  private final int raftTerm;
   private final int producerId;
   private final long sourceRecordPosition;
 
@@ -43,7 +42,6 @@ public class RecordImpl<T extends RecordValue> implements Record<T> {
       long key,
       long position,
       Instant timestamp,
-      int raftTerm,
       int producerId,
       long sourceRecordPosition,
       RecordMetadata metadata,
@@ -52,7 +50,6 @@ public class RecordImpl<T extends RecordValue> implements Record<T> {
     this.key = key;
     this.position = position;
     this.timestamp = timestamp;
-    this.raftTerm = raftTerm;
     this.producerId = producerId;
     this.sourceRecordPosition = sourceRecordPosition;
     this.metadata = metadata;
@@ -69,7 +66,6 @@ public class RecordImpl<T extends RecordValue> implements Record<T> {
         event.getKey(),
         event.getPosition(),
         Instant.ofEpochMilli(event.getTimestamp()),
-        event.getRaftTerm(),
         event.getProducerId(),
         event.getSourceEventPosition(),
         metadata,
@@ -89,11 +85,6 @@ public class RecordImpl<T extends RecordValue> implements Record<T> {
   @Override
   public Instant getTimestamp() {
     return timestamp;
-  }
-
-  @Override
-  public int getRaftTerm() {
-    return raftTerm;
   }
 
   @Override
@@ -134,8 +125,6 @@ public class RecordImpl<T extends RecordValue> implements Record<T> {
         + position
         + ", timestamp="
         + timestamp
-        + ", raftTerm="
-        + raftTerm
         + ", producerId="
         + producerId
         + ", sourceRecordPosition="

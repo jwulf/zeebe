@@ -15,6 +15,11 @@
  */
 package io.zeebe.exporter;
 
+import io.zeebe.exporter.api.record.Record;
+import io.zeebe.exporter.api.record.RecordMetadata;
+import io.zeebe.protocol.clientapi.RecordType;
+import io.zeebe.protocol.clientapi.ValueType;
+
 public class ElasticsearchExporterConfiguration {
 
   // elasticsearch http url
@@ -22,6 +27,7 @@ public class ElasticsearchExporterConfiguration {
 
   public IndexConfiguration index = new IndexConfiguration();
   public BulkConfiguration bulk = new BulkConfiguration();
+  public AuthenticationConfiguration authentication = new AuthenticationConfiguration();
 
   @Override
   public String toString() {
@@ -33,6 +39,8 @@ public class ElasticsearchExporterConfiguration {
         + index
         + ", bulk="
         + bulk
+        + ", authentication="
+        + authentication
         + '}';
   }
 
@@ -56,7 +64,10 @@ public class ElasticsearchExporterConfiguration {
     public boolean message = false;
     public boolean messageSubscription = false;
     public boolean raft = false;
+    public boolean variable = true;
+    public boolean variableDocument = false;
     public boolean workflowInstance = true;
+    public boolean workflowInstanceCreation = false;
     public boolean workflowInstanceSubscription = false;
 
     @Override
@@ -85,8 +96,14 @@ public class ElasticsearchExporterConfiguration {
           + messageSubscription
           + ", raft="
           + raft
+          + ", variable="
+          + variable
+          + ", variableDocument="
+          + variableDocument
           + ", workflowInstance="
           + workflowInstance
+          + ", workflowInstanceCreation="
+          + workflowInstanceCreation
           + ", workflowInstanceSubscription="
           + workflowInstanceSubscription
           + '}';
@@ -102,6 +119,68 @@ public class ElasticsearchExporterConfiguration {
     @Override
     public String toString() {
       return "BulkConfiguration{" + "delay=" + delay + ", size=" + size + '}';
+    }
+  }
+
+  public static class AuthenticationConfiguration {
+    public String username;
+    public String password;
+
+    public boolean isPresent() {
+      return (username != null && !username.isEmpty()) && (password != null && !password.isEmpty());
+    }
+
+    @Override
+    public String toString() {
+      return "AuthenticationConfiguration{" + "username='" + username + '\'' + '}';
+    }
+  }
+
+  public boolean shouldIndexRecord(Record<?> record) {
+    final RecordMetadata metadata = record.getMetadata();
+    return shouldIndexRecordType(metadata.getRecordType())
+        && shouldIndexValueType(metadata.getValueType());
+  }
+
+  private boolean shouldIndexValueType(ValueType valueType) {
+    switch (valueType) {
+      case DEPLOYMENT:
+        return index.deployment;
+      case INCIDENT:
+        return index.incident;
+      case JOB:
+        return index.job;
+      case JOB_BATCH:
+        return index.jobBatch;
+      case MESSAGE:
+        return index.message;
+      case MESSAGE_SUBSCRIPTION:
+        return index.messageSubscription;
+      case VARIABLE:
+        return index.variable;
+      case VARIABLE_DOCUMENT:
+        return index.variableDocument;
+      case WORKFLOW_INSTANCE:
+        return index.workflowInstance;
+      case WORKFLOW_INSTANCE_CREATION:
+        return index.workflowInstanceCreation;
+      case WORKFLOW_INSTANCE_SUBSCRIPTION:
+        return index.workflowInstanceSubscription;
+      default:
+        return false;
+    }
+  }
+
+  private boolean shouldIndexRecordType(RecordType recordType) {
+    switch (recordType) {
+      case EVENT:
+        return index.event;
+      case COMMAND:
+        return index.command;
+      case COMMAND_REJECTION:
+        return index.rejection;
+      default:
+        return false;
     }
   }
 }

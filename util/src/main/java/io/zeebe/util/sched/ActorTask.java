@@ -166,16 +166,18 @@ public class ActorTask {
     final Queue<ActorJob> submittedJobs = this.submittedJobs;
 
     // add job to queue
-    submittedJobs.offer(job);
-
-    if (submittedJobs != this.submittedJobs) {
-      // jobs queue was replaced (see onClosed method)
-      // in case the job was offer after the original queue was drained
-      // we have to manually fail the job to make sure does not get lost
-      failJob(job);
+    if (submittedJobs.offer(job)) {
+      if (submittedJobs != this.submittedJobs) {
+        // jobs queue was replaced (see onClosed method)
+        // in case the job was offer after the original queue was drained
+        // we have to manually fail the job to make sure does not get lost
+        failJob(job);
+      } else {
+        // wakeup task if waiting
+        tryWakeup();
+      }
     } else {
-      // wakeup task if waiting
-      tryWakeup();
+      job.failFuture("Was not able to submit job to the actors queue.");
     }
   }
 
@@ -345,7 +347,7 @@ public class ActorTask {
     }
   }
 
-  public void onFailure(Exception failure) {
+  public void onFailure(Throwable failure) {
     switch (lifecyclePhase) {
       case STARTING:
         Loggers.ACTOR_LOGGER.error(

@@ -15,6 +15,7 @@
  */
 package io.zeebe.msgpack.property;
 
+import io.zeebe.msgpack.MsgpackPropertyException;
 import io.zeebe.msgpack.Recyclable;
 import io.zeebe.msgpack.spec.MsgPackReader;
 import io.zeebe.msgpack.spec.MsgPackWriter;
@@ -69,7 +70,8 @@ public abstract class BaseProperty<T extends BaseValue> implements Recyclable {
     } else if (defaultValue != null) {
       return defaultValue;
     } else {
-      throw new RuntimeException(String.format("Property '%s' has no valid value", key));
+      throw new MsgpackPropertyException(
+          key, "Expected a value or default value to be specified, but has nothing");
     }
   }
 
@@ -89,9 +91,8 @@ public abstract class BaseProperty<T extends BaseValue> implements Recyclable {
     }
 
     if (valueToWrite == null) {
-      throw new RuntimeException(
-          String.format(
-              "Cannot write property '%s'; neither value, nor default value specified", key));
+      throw new MsgpackPropertyException(
+          key, "Expected a value or default value to be set before writing, but has nothing");
     }
 
     key.write(writer);
@@ -115,5 +116,25 @@ public abstract class BaseProperty<T extends BaseValue> implements Recyclable {
     builder.append(" => ");
     builder.append(value.toString());
     return builder.toString();
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+
+    if (!(o instanceof BaseProperty)) {
+      return false;
+    }
+
+    final BaseProperty<?> that = (BaseProperty<?>) o;
+    return Objects.equals(getKey(), that.getKey())
+        && Objects.equals(resolveValue(), that.resolveValue());
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(getKey(), value, defaultValue, isSet);
   }
 }

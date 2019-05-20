@@ -15,24 +15,46 @@
  */
 package io.zeebe.logstreams.impl.service;
 
+import static io.zeebe.logstreams.impl.LogBlockIndexWriter.LOG;
+
+import io.zeebe.db.ZeebeDbFactory;
+import io.zeebe.db.impl.rocksdb.ZeebeRocksDbFactory;
+import io.zeebe.logstreams.impl.log.index.LogBlockColumnFamilies;
 import io.zeebe.logstreams.impl.log.index.LogBlockIndex;
+import io.zeebe.logstreams.state.StateSnapshotController;
+import io.zeebe.logstreams.state.StateStorage;
 import io.zeebe.servicecontainer.Service;
 import io.zeebe.servicecontainer.ServiceStartContext;
 import io.zeebe.servicecontainer.ServiceStopContext;
-import java.nio.ByteBuffer;
-import org.agrona.concurrent.UnsafeBuffer;
 
 public class LogBlockIndexService implements Service<LogBlockIndex> {
   private LogBlockIndex logBlockIndex;
+  private final StateStorage stateStorage;
+
+  public LogBlockIndexService(StateStorage stateStorage) {
+    this.stateStorage = stateStorage;
+  }
 
   @Override
   public void start(ServiceStartContext startContext) {
-    logBlockIndex = new LogBlockIndex(100000, (c) -> new UnsafeBuffer(ByteBuffer.allocate(c)));
+    final ZeebeDbFactory<LogBlockColumnFamilies> dbFactory =
+        ZeebeRocksDbFactory.newFactory(LogBlockColumnFamilies.class);
+    final StateSnapshotController snapshotController =
+        new StateSnapshotController(dbFactory, stateStorage);
+
+    logBlockIndex = new LogBlockIndex(snapshotController);
   }
 
   @Override
   public void stop(ServiceStopContext stopContext) {
-    logBlockIndex = null;
+    if (logBlockIndex != null) {
+      try {
+        logBlockIndex.closeDb();
+      } catch (Exception e) {
+        LOG.error("Couldn't close block index db", e);
+      }
+      logBlockIndex = null;
+    }
   }
 
   @Override

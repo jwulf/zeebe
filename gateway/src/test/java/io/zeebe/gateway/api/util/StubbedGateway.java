@@ -15,6 +15,7 @@
  */
 package io.zeebe.gateway.api.util;
 
+import static io.zeebe.protocol.Protocol.START_PARTITION_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.ManagedChannel;
@@ -22,8 +23,9 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.zeebe.gateway.Gateway;
 import io.zeebe.gateway.cmd.BrokerErrorException;
-import io.zeebe.gateway.cmd.ClientCommandRejectedException;
-import io.zeebe.gateway.cmd.ClientException;
+import io.zeebe.gateway.cmd.BrokerRejectionException;
+import io.zeebe.gateway.cmd.BrokerResponseException;
+import io.zeebe.gateway.cmd.IllegalBrokerResponseException;
 import io.zeebe.gateway.impl.broker.BrokerClient;
 import io.zeebe.gateway.impl.broker.BrokerResponseConsumer;
 import io.zeebe.gateway.impl.broker.cluster.BrokerClusterState;
@@ -34,10 +36,7 @@ import io.zeebe.gateway.impl.broker.response.BrokerResponse;
 import io.zeebe.gateway.impl.configuration.GatewayCfg;
 import io.zeebe.gateway.protocol.GatewayGrpc;
 import io.zeebe.gateway.protocol.GatewayGrpc.GatewayBlockingStub;
-import io.zeebe.protocol.PartitionState;
-import io.zeebe.protocol.impl.data.cluster.TopologyResponseDto;
 import io.zeebe.util.sched.future.ActorFuture;
-import io.zeebe.util.sched.future.CompletableActorFuture;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -53,7 +52,7 @@ public class StubbedGateway extends Gateway {
   private List<BrokerRequest> brokerRequests = new ArrayList<>();
 
   public StubbedGateway() {
-    super(new GatewayCfg(), cfg -> InProcessServerBuilder.forName(SERVER_NAME));
+    super(new GatewayCfg(), cfg -> null, cfg -> InProcessServerBuilder.forName(SERVER_NAME));
   }
 
   public <RequestT extends BrokerRequest<?>, ResponseT extends BrokerResponse<?>>
@@ -76,6 +75,17 @@ public class StubbedGateway extends Gateway {
   public <T extends BrokerRequest<?>> T getSingleBrokerRequest() {
     assertThat(brokerRequests).hasSize(1);
     return (T) brokerRequests.get(0);
+  }
+
+  @FunctionalInterface
+  interface RequestHandler<RequestT extends BrokerRequest<?>, ResponseT extends BrokerResponse<?>> {
+    ResponseT handle(RequestT request) throws Exception;
+  }
+
+  public interface RequestStub<
+          RequestT extends BrokerRequest<?>, ResponseT extends BrokerResponse<?>>
+      extends RequestHandler<RequestT, ResponseT> {
+    void registerWith(StubbedGateway gateway);
   }
 
   private class StubbedBrokerClient implements BrokerClient {
@@ -102,14 +112,15 @@ public class StubbedGateway extends Gateway {
         if (response.isResponse()) {
           responseConsumer.accept(response.getKey(), response.getResponse());
         } else if (response.isRejection()) {
-          throwableConsumer.accept(new ClientCommandRejectedException(response.getRejection()));
+          throwableConsumer.accept(new BrokerRejectionException(response.getRejection()));
         } else if (response.isError()) {
           throwableConsumer.accept(new BrokerErrorException(response.getError()));
         } else {
-          throwableConsumer.accept(new ClientException("Unknown response received: " + response));
+          throwableConsumer.accept(
+              new IllegalBrokerResponseException("Unknown response received: " + response));
         }
       } catch (Exception e) {
-        throwableConsumer.accept(new ClientException("Failed to handle response", e));
+        throwableConsumer.accept(new BrokerResponseException(e));
       }
     }
 
@@ -121,57 +132,26 @@ public class StubbedGateway extends Gateway {
 
   private class StubbedTopologyManager implements BrokerTopologyManager {
 
-    private BrokerClusterState clusterState;
+    private final BrokerClusterStateImpl clusterState;
 
     StubbedTopologyManager() {
-      final TopologyResponseDto defaultTopology = new TopologyResponseDto();
-      defaultTopology
-          .setPartitionsCount(1)
-          .setClusterSize(1)
-          .setReplicationFactor(1)
-          .brokers()
-          .add()
-          .setHost("localhost")
-          .setPort(26501)
-          .setNodeId(0)
-          .partitionStates()
-          .add()
-          .setPartitionId(0)
-          .setReplicationFactor(1)
-          .setState(PartitionState.LEADER);
+      this(8);
+    }
 
-      provideTopology(defaultTopology);
+    StubbedTopologyManager(int partitionsCount) {
+      clusterState = new BrokerClusterStateImpl();
+      clusterState.addBrokerIfAbsent(0);
+      clusterState.setBrokerAddressIfPresent(0, "localhost:26501");
+      for (int partitionOffset = 0; partitionOffset < partitionsCount; partitionOffset++) {
+        clusterState.setPartitionLeader(START_PARTITION_ID + partitionOffset, 0);
+        clusterState.addPartitionIfAbsent(START_PARTITION_ID + partitionOffset);
+      }
+      clusterState.setPartitionsCount(partitionsCount);
     }
 
     @Override
     public BrokerClusterState getTopology() {
       return clusterState;
     }
-
-    @Override
-    public ActorFuture<BrokerClusterState> requestTopology() {
-      return CompletableActorFuture.completed(clusterState);
-    }
-
-    @Override
-    public void withTopology(Consumer<BrokerClusterState> topologyConsumer) {
-      topologyConsumer.accept(clusterState);
-    }
-
-    @Override
-    public void provideTopology(TopologyResponseDto topology) {
-      clusterState = new BrokerClusterStateImpl(topology, (id, addr) -> {});
-    }
-  }
-
-  @FunctionalInterface
-  interface RequestHandler<RequestT extends BrokerRequest<?>, ResponseT extends BrokerResponse<?>> {
-    ResponseT handle(RequestT request) throws Exception;
-  }
-
-  public interface RequestStub<
-          RequestT extends BrokerRequest<?>, ResponseT extends BrokerResponse<?>>
-      extends RequestHandler<RequestT, ResponseT> {
-    void registerWith(StubbedGateway gateway);
   }
 }

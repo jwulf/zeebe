@@ -29,9 +29,13 @@ public class DataCfg implements ConfigurationEntry {
 
   private String defaultLogSegmentSize = "512M";
 
+  private String indexBlockSize = "4M";
+
   private String snapshotPeriod = "15m";
 
   private String snapshotReplicationPeriod = "5m";
+
+  private int maxSnapshots = 1;
 
   @Override
   public void init(BrokerCfg globalConfig, String brokerBase, Environment environment) {
@@ -59,6 +63,14 @@ public class DataCfg implements ConfigurationEntry {
     this.defaultLogSegmentSize = defaultLogSegmentSize;
   }
 
+  public String getIndexBlockSize() {
+    return indexBlockSize;
+  }
+
+  public void setIndexBlockSize(final String indexBlockSize) {
+    this.indexBlockSize = indexBlockSize;
+  }
+
   public String getSnapshotPeriod() {
     return snapshotPeriod;
   }
@@ -75,6 +87,14 @@ public class DataCfg implements ConfigurationEntry {
     this.snapshotReplicationPeriod = snapshotReplicationPeriod;
   }
 
+  public void setMaxSnapshots(final int maxSnapshots) {
+    this.maxSnapshots = maxSnapshots;
+  }
+
+  public int getMaxSnapshots() {
+    return maxSnapshots;
+  }
+
   @Override
   public String toString() {
     return "DataCfg{"
@@ -83,11 +103,17 @@ public class DataCfg implements ConfigurationEntry {
         + ", defaultLogSegmentSize='"
         + defaultLogSegmentSize
         + '\''
+        + ", indexBlockSize='"
+        + indexBlockSize
+        + '\''
         + ", snapshotPeriod='"
         + snapshotPeriod
         + '\''
         + ", snapshotReplicationPeriod='"
         + snapshotReplicationPeriod
+        + '\''
+        + ", maxSnapshots='"
+        + maxSnapshots
         + '\''
         + '}';
   }

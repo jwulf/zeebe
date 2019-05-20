@@ -15,9 +15,9 @@
  */
 package io.zeebe.test.util.record;
 
-import io.zeebe.exporter.record.Record;
-import io.zeebe.exporter.record.RecordMetadata;
-import io.zeebe.exporter.record.RecordValue;
+import io.zeebe.exporter.api.record.Record;
+import io.zeebe.exporter.api.record.RecordMetadata;
+import io.zeebe.exporter.api.record.RecordValue;
 import io.zeebe.protocol.clientapi.RecordType;
 import io.zeebe.protocol.clientapi.RejectionType;
 import io.zeebe.protocol.clientapi.ValueType;
@@ -59,10 +59,6 @@ public abstract class ExporterRecordStream<
     return filter(r -> r.getPosition() == position);
   }
 
-  public S withRaftTerm(final int raftTerm) {
-    return filter(r -> r.getRaftTerm() == raftTerm);
-  }
-
   public S withSourceRecordPosition(final long sourceRecordPosition) {
     return filter(r -> r.getSourceRecordPosition() == sourceRecordPosition);
   }
@@ -71,7 +67,7 @@ public abstract class ExporterRecordStream<
     return filter(r -> r.getProducerId() == producerId);
   }
 
-  public S withKey(final long key) {
+  public S withRecordKey(final long key) {
     return filter(r -> r.getKey() == key);
   }
 

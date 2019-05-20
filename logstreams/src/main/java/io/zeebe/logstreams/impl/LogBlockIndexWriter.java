@@ -16,15 +16,13 @@
 package io.zeebe.logstreams.impl;
 
 import static io.zeebe.logstreams.impl.LogEntryDescriptor.getPosition;
-import static io.zeebe.logstreams.log.LogStreamUtil.INVALID_ADDRESS;
+import static io.zeebe.logstreams.impl.service.LogStreamService.INVALID_ADDRESS;
 import static io.zeebe.logstreams.spi.LogStorage.OP_RESULT_INSUFFICIENT_BUFFER_CAPACITY;
 import static io.zeebe.logstreams.spi.LogStorage.OP_RESULT_INVALID_ADDR;
 
 import io.zeebe.logstreams.impl.log.index.LogBlockIndex;
+import io.zeebe.logstreams.impl.log.index.LogBlockIndexContext;
 import io.zeebe.logstreams.spi.LogStorage;
-import io.zeebe.logstreams.spi.ReadableSnapshot;
-import io.zeebe.logstreams.spi.SnapshotStorage;
-import io.zeebe.logstreams.spi.SnapshotWriter;
 import io.zeebe.util.allocation.AllocatedBuffer;
 import io.zeebe.util.allocation.BufferAllocators;
 import io.zeebe.util.metrics.Metric;
@@ -59,6 +57,7 @@ public class LogBlockIndexWriter extends Actor {
   private final String name;
   private final LogStorage logStorage;
   private final LogBlockIndex blockIndex;
+  private final LogBlockIndexContext indexContext;
   private final MetricsManager metricsManager;
 
   /** Defines the block size for which an index will be created. */
@@ -92,9 +91,9 @@ public class LogBlockIndexWriter extends Actor {
   private final ActorConditions onCommitPositionUpdatedConditions;
   private ActorCondition onCommitCondition;
 
-  private final SnapshotStorage snapshotStorage;
   private final Duration snapshotInterval;
   private long snapshotEventPosition = -1;
+  private final int maxSnapshots;
 
   private Metric snapshotsCreated;
 
@@ -109,17 +108,19 @@ public class LogBlockIndexWriter extends Actor {
     this.blockIndex = blockIndex;
     this.metricsManager = metricsManager;
     this.commitPosition = builder.getCommitPosition();
-    this.snapshotStorage = builder.getSnapshotStorage();
     this.onCommitPositionUpdatedConditions = builder.getOnCommitPositionUpdatedConditions();
 
     this.deviation = builder.getDeviation();
     this.indexBlockSize = (int) (builder.getIndexBlockSize() * (1f - deviation));
     this.snapshotInterval = builder.getSnapshotPeriod();
+    this.maxSnapshots = builder.getMaxSnapshots();
     this.bufferSize = builder.getReadBlockSize();
 
     this.allocatedBuffer = BufferAllocators.allocateDirect(bufferSize);
     this.ioBuffer = allocatedBuffer.getRawBuffer();
     this.buffer.wrap(ioBuffer);
+
+    this.indexContext = blockIndex.createLogBlockIndexContext();
   }
 
   @Override
@@ -136,37 +137,27 @@ public class LogBlockIndexWriter extends Actor {
             .label("logName", getName())
             .create();
 
-    recoverBlockIndex();
-  }
-
-  private void recoverBlockIndex() {
     try {
-      final ReadableSnapshot lastSnapshot = snapshotStorage.getLastSnapshot(name);
-      if (lastSnapshot != null) {
-        lastSnapshot.recoverFromSnapshot(blockIndex);
+      final long snapshotPosition = blockIndex.getLastPosition();
+      final long snapshotBlockAddress =
+          blockIndex.lookupBlockAddress(indexContext, snapshotPosition);
 
-        final long snapshotPosition = lastSnapshot.getPosition();
-
-        final long snapshotBlockAddress = blockIndex.lookupBlockAddress(snapshotPosition);
-        if (snapshotBlockAddress >= logStorage.getFirstBlockAddress()) {
-          nextAddress = snapshotBlockAddress;
-          lastBlockAddress = snapshotBlockAddress;
-          lastBlockEventPosition = snapshotPosition;
-          snapshotEventPosition = snapshotPosition;
-        } else {
-          LOG.warn("Can't find address of snapshot position. Rebuild block index.");
-        }
+      if (snapshotBlockAddress >= logStorage.getFirstBlockAddress()) {
+        nextAddress = snapshotBlockAddress;
+        lastBlockAddress = snapshotBlockAddress;
+        lastBlockEventPosition = snapshotPosition;
+        snapshotEventPosition = snapshotPosition;
+      } else {
+        LOG.warn("Can't find address of snapshot position. Rebuilding block index.");
       }
 
       if (nextAddress == INVALID_ADDRESS) {
-        blockIndex.reset();
-
         nextAddress = logStorage.getFirstBlockAddress();
         lastBlockAddress = 0;
       }
     } catch (Exception e) {
-      LOG.error("Failed to recover block index.", e);
-      throw new RuntimeException("Failed to recover block index.", e);
+      LOG.error("Failed to recover block index", e);
+      throw new RuntimeException("Failed to recover block index", e);
     }
   }
 
@@ -208,6 +199,7 @@ public class LogBlockIndexWriter extends Actor {
       nextAddress = result;
 
       addToCurrentBlock(currentAddress, ioBuffer.position());
+
     } else if (result == OP_RESULT_INSUFFICIENT_BUFFER_CAPACITY) {
       increaseBufferSize();
       runCurrentWork();
@@ -244,7 +236,7 @@ public class LogBlockIndexWriter extends Actor {
             currentBlockEventPosition,
             currentBlockAddress);
 
-        blockIndex.addBlock(currentBlockEventPosition, currentBlockAddress);
+        blockIndex.addBlock(indexContext, currentBlockEventPosition, currentBlockAddress);
 
         lastBlockAddress = currentBlockAddress;
         lastBlockEventPosition = currentBlockEventPosition;
@@ -282,29 +274,19 @@ public class LogBlockIndexWriter extends Actor {
   }
 
   private void createSnapshot() {
-    SnapshotWriter snapshotWriter = null;
     try {
       if (lastBlockEventPosition > 0 && lastBlockEventPosition > snapshotEventPosition) {
         // flush the log to ensure that the snapshot doesn't contains indexes of unwritten events
         logStorage.flush();
 
-        snapshotWriter = snapshotStorage.createSnapshot(name, lastBlockEventPosition);
-
-        snapshotWriter.writeSnapshot(blockIndex);
-        snapshotWriter.commit();
-
         snapshotEventPosition = lastBlockEventPosition;
+        blockIndex.writeSnapshot(snapshotEventPosition, maxSnapshots);
 
         LOG.trace("Created snapshot of block index {}.", name);
-
         snapshotsCreated.incrementOrdered();
       }
     } catch (Exception e) {
       LOG.warn("Failed to create snapshot of block index {}", name, e);
-
-      if (snapshotWriter != null) {
-        snapshotWriter.abort();
-      }
     }
   }
 

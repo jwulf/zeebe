@@ -19,28 +19,34 @@ import io.zeebe.msgpack.UnpackedObject;
 import io.zeebe.msgpack.property.EnumProperty;
 import io.zeebe.msgpack.property.LongProperty;
 import io.zeebe.msgpack.property.StringProperty;
+import io.zeebe.protocol.ErrorType;
+import io.zeebe.protocol.WorkflowInstanceRelated;
 import io.zeebe.protocol.impl.record.value.workflowinstance.WorkflowInstanceRecord;
 import org.agrona.DirectBuffer;
 
-public class IncidentRecord extends UnpackedObject {
+public class IncidentRecord extends UnpackedObject implements WorkflowInstanceRelated {
   private final EnumProperty<ErrorType> errorTypeProp =
       new EnumProperty<>("errorType", ErrorType.class, ErrorType.UNKNOWN);
   private final StringProperty errorMessageProp = new StringProperty("errorMessage", "");
 
   private final StringProperty bpmnProcessIdProp = new StringProperty("bpmnProcessId", "");
+  private final LongProperty workflowKeyProp = new LongProperty("workflowKey", -1L);
   private final LongProperty workflowInstanceKeyProp = new LongProperty("workflowInstanceKey", -1L);
   private final StringProperty elementIdProp = new StringProperty("elementId", "");
   private final LongProperty elementInstanceKeyProp = new LongProperty("elementInstanceKey", -1L);
   private final LongProperty jobKeyProp = new LongProperty("jobKey", -1L);
+  private final LongProperty variableScopeKeyProp = new LongProperty("variableScopeKey", -1L);
 
   public IncidentRecord() {
     this.declareProperty(errorTypeProp)
         .declareProperty(errorMessageProp)
         .declareProperty(bpmnProcessIdProp)
+        .declareProperty(workflowKeyProp)
         .declareProperty(workflowInstanceKeyProp)
         .declareProperty(elementIdProp)
         .declareProperty(elementInstanceKeyProp)
-        .declareProperty(jobKeyProp);
+        .declareProperty(jobKeyProp)
+        .declareProperty(variableScopeKeyProp);
   }
 
   public ErrorType getErrorType() {
@@ -84,6 +90,15 @@ public class IncidentRecord extends UnpackedObject {
     return this;
   }
 
+  public long getWorkflowKey() {
+    return workflowKeyProp.getValue();
+  }
+
+  public IncidentRecord setWorkflowKey(long workflowKey) {
+    this.workflowKeyProp.setValue(workflowKey);
+    return this;
+  }
+
   public long getWorkflowInstanceKey() {
     return workflowInstanceKeyProp.getValue();
   }
@@ -111,13 +126,24 @@ public class IncidentRecord extends UnpackedObject {
     return this;
   }
 
+  public IncidentRecord setVariableScopeKey(long variableScopeKey) {
+    this.variableScopeKeyProp.setValue(variableScopeKey);
+    return this;
+  }
+
+  public long getVariableScopeKey() {
+    return variableScopeKeyProp.getValue();
+  }
+
   public IncidentRecord initFromWorkflowInstanceFailure(
       long key, WorkflowInstanceRecord workflowInstanceEvent) {
 
     setElementInstanceKey(key);
     setBpmnProcessId(workflowInstanceEvent.getBpmnProcessId());
+    setWorkflowKey(workflowInstanceEvent.getWorkflowKey());
     setWorkflowInstanceKey(workflowInstanceEvent.getWorkflowInstanceKey());
     setElementId(workflowInstanceEvent.getElementId());
+    setVariableScopeKey(key);
 
     return this;
   }

@@ -31,7 +31,11 @@ public interface Intent {
           WorkflowInstanceSubscriptionIntent.class,
           ExporterIntent.class,
           JobBatchIntent.class,
-          TimerIntent.class);
+          TimerIntent.class,
+          VariableIntent.class,
+          VariableDocumentIntent.class,
+          WorkflowInstanceCreationIntent.class,
+          ErrorIntent.class);
 
   Intent UNKNOWN =
       new Intent() {
@@ -60,8 +64,6 @@ public interface Intent {
         return IncidentIntent.from(intent);
       case NOOP:
         return Intent.UNKNOWN;
-      case RAFT:
-        return RaftIntent.from(intent);
       case JOB:
         return JobIntent.from(intent);
       case WORKFLOW_INSTANCE:
@@ -80,11 +82,22 @@ public interface Intent {
         return JobBatchIntent.from(intent);
       case TIMER:
         return TimerIntent.from(intent);
+      case VARIABLE:
+        return VariableIntent.from(intent);
+      case VARIABLE_DOCUMENT:
+        return VariableDocumentIntent.from(intent);
+      case WORKFLOW_INSTANCE_CREATION:
+        return WorkflowInstanceCreationIntent.from(intent);
+      case ERROR:
+        return ErrorIntent.from(intent);
       case NULL_VAL:
       case SBE_UNKNOWN:
         return Intent.UNKNOWN;
       default:
-        throw new RuntimeException("unknown type");
+        throw new RuntimeException(
+            String.format(
+                "Expected to map value type %s to intent type, but did not recognize the value type",
+                valueType.name()));
     }
   }
 
@@ -96,8 +109,6 @@ public interface Intent {
         return IncidentIntent.valueOf(intent);
       case NOOP:
         return Intent.UNKNOWN;
-      case RAFT:
-        return RaftIntent.valueOf(intent);
       case JOB:
         return JobIntent.valueOf(intent);
       case WORKFLOW_INSTANCE:
@@ -116,17 +127,27 @@ public interface Intent {
         return JobBatchIntent.valueOf(intent);
       case TIMER:
         return TimerIntent.valueOf(intent);
+      case VARIABLE:
+        return VariableIntent.valueOf(intent);
+      case VARIABLE_DOCUMENT:
+        return VariableDocumentIntent.valueOf(intent);
+      case WORKFLOW_INSTANCE_CREATION:
+        return WorkflowInstanceCreationIntent.valueOf(intent);
+      case ERROR:
+        return ErrorIntent.valueOf(intent);
       case NULL_VAL:
       case SBE_UNKNOWN:
         return Intent.UNKNOWN;
       default:
-        throw new RuntimeException("unknown type");
+        throw new RuntimeException(
+            String.format(
+                "Expected to map value type %s to intent type, but did not recognize the value type",
+                valueType.name()));
     }
   }
 
   static int maxCardinality() {
-    return INTENT_CLASSES
-        .stream()
+    return INTENT_CLASSES.stream()
         .mapToInt(clazz -> clazz.getEnumConstants().length)
         .max()
         .getAsInt();

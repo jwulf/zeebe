@@ -17,6 +17,7 @@ package io.zeebe.exporter;
 
 import static io.zeebe.exporter.ElasticsearchExporter.ZEEBE_RECORD_TEMPLATE_JSON;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -24,14 +25,16 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import io.zeebe.exporter.record.Record;
+import io.zeebe.exporter.api.record.Record;
 import io.zeebe.protocol.clientapi.RecordType;
 import io.zeebe.protocol.clientapi.ValueType;
 import io.zeebe.test.exporter.ExporterTestHarness;
+import io.zeebe.util.ZbLogger;
 import java.time.Duration;
 import java.util.List;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
 
 public class ElasticsearchExporterTest {
 
@@ -46,6 +49,19 @@ public class ElasticsearchExporterTest {
   }
 
   @Test
+  public void shouldNotFailOnOpenIfElasticIsUnreachable() {
+    // given
+    final ElasticsearchClient client =
+        Mockito.spy(new ElasticsearchClient(config, new ZbLogger("test")));
+    final ElasticsearchExporter exporter = createExporter(client);
+    config.index.createTemplate = true;
+
+    // when - then : only fails when trying to export, not before
+    openExporter(exporter);
+    assertThatThrownBy(testHarness::export).isInstanceOf(ElasticsearchExporterException.class);
+  }
+
+  @Test
   public void shouldCreateIndexTemplates() {
     // given
     config.index.prefix = "foo-bar";
@@ -57,11 +73,15 @@ public class ElasticsearchExporterTest {
     config.index.message = true;
     config.index.messageSubscription = true;
     config.index.raft = true;
+    config.index.variable = true;
+    config.index.variableDocument = true;
     config.index.workflowInstance = true;
+    config.index.workflowInstanceCreation = true;
     config.index.workflowInstanceSubscription = true;
 
     // when
     createAndOpenExporter();
+    testHarness.export();
 
     // then
     verify(esClient).putIndexTemplate("foo-bar", ZEEBE_RECORD_TEMPLATE_JSON, "-");
@@ -72,8 +92,10 @@ public class ElasticsearchExporterTest {
     verify(esClient).putIndexTemplate(ValueType.JOB_BATCH);
     verify(esClient).putIndexTemplate(ValueType.MESSAGE);
     verify(esClient).putIndexTemplate(ValueType.MESSAGE_SUBSCRIPTION);
-    verify(esClient).putIndexTemplate(ValueType.RAFT);
+    verify(esClient).putIndexTemplate(ValueType.VARIABLE);
+    verify(esClient).putIndexTemplate(ValueType.VARIABLE_DOCUMENT);
     verify(esClient).putIndexTemplate(ValueType.WORKFLOW_INSTANCE);
+    verify(esClient).putIndexTemplate(ValueType.WORKFLOW_INSTANCE_CREATION);
     verify(esClient).putIndexTemplate(ValueType.WORKFLOW_INSTANCE_SUBSCRIPTION);
   }
 
@@ -88,7 +110,10 @@ public class ElasticsearchExporterTest {
     config.index.message = true;
     config.index.messageSubscription = true;
     config.index.raft = true;
+    config.index.variable = true;
+    config.index.variableDocument = true;
     config.index.workflowInstance = true;
+    config.index.workflowInstanceCreation = true;
     config.index.workflowInstanceSubscription = true;
 
     createAndOpenExporter();
@@ -101,8 +126,10 @@ public class ElasticsearchExporterTest {
           ValueType.JOB_BATCH,
           ValueType.MESSAGE,
           ValueType.MESSAGE_SUBSCRIPTION,
-          ValueType.RAFT,
+          ValueType.VARIABLE,
+          ValueType.VARIABLE_DOCUMENT,
           ValueType.WORKFLOW_INSTANCE,
+          ValueType.WORKFLOW_INSTANCE_CREATION,
           ValueType.WORKFLOW_INSTANCE_SUBSCRIPTION
         };
 
@@ -126,7 +153,10 @@ public class ElasticsearchExporterTest {
     config.index.message = false;
     config.index.messageSubscription = false;
     config.index.raft = false;
+    config.index.variable = false;
+    config.index.variableDocument = false;
     config.index.workflowInstance = false;
+    config.index.workflowInstanceCreation = false;
     config.index.workflowInstanceSubscription = false;
 
     createAndOpenExporter();
@@ -139,8 +169,10 @@ public class ElasticsearchExporterTest {
           ValueType.JOB_BATCH,
           ValueType.MESSAGE,
           ValueType.MESSAGE_SUBSCRIPTION,
-          ValueType.RAFT,
+          ValueType.VARIABLE,
+          ValueType.VARIABLE_DOCUMENT,
           ValueType.WORKFLOW_INSTANCE,
+          ValueType.WORKFLOW_INSTANCE_CREATION,
           ValueType.WORKFLOW_INSTANCE_SUBSCRIPTION
         };
 
@@ -303,8 +335,7 @@ public class ElasticsearchExporterTest {
 
     // when
     final List<Record> exported =
-        testHarness
-            .stream(
+        testHarness.stream(
                 r ->
                     r.getMetadata()
                         .setValueType(ValueType.WORKFLOW_INSTANCE)
@@ -317,18 +348,28 @@ public class ElasticsearchExporterTest {
     assertThat(testHarness.getController().getPosition()).isEqualTo(exported.get(3).getPosition());
   }
 
-  private ElasticsearchExporter createAndOpenExporter() {
-    final ElasticsearchExporter exporter =
-        new ElasticsearchExporter() {
-          @Override
-          protected ElasticsearchClient createClient() {
-            return esClient;
-          }
-        };
+  private ElasticsearchExporter createExporter() {
+    return createExporter(esClient);
+  }
+
+  private ElasticsearchExporter createExporter(ElasticsearchClient client) {
+    return new ElasticsearchExporter() {
+      @Override
+      protected ElasticsearchClient createClient() {
+        return client;
+      }
+    };
+  }
+
+  private void openExporter(ElasticsearchExporter exporter) {
     testHarness = new ExporterTestHarness(exporter);
     testHarness.configure("elasticsearch", config);
     testHarness.open();
+  }
 
+  private ElasticsearchExporter createAndOpenExporter() {
+    final ElasticsearchExporter exporter = createExporter();
+    openExporter(exporter);
     return exporter;
   }
 

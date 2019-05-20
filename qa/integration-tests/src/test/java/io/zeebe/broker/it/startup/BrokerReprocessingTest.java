@@ -29,18 +29,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.entry;
 import static org.junit.Assert.fail;
 
-import io.zeebe.broker.clustering.base.partitions.Partition;
 import io.zeebe.broker.it.GrpcClientRule;
 import io.zeebe.broker.it.util.RecordingJobHandler;
-import io.zeebe.broker.job.JobTimeoutTrigger;
 import io.zeebe.broker.test.EmbeddedBrokerRule;
 import io.zeebe.client.api.events.DeploymentEvent;
 import io.zeebe.client.api.events.WorkflowInstanceEvent;
 import io.zeebe.client.api.response.ActivateJobsResponse;
 import io.zeebe.client.api.response.ActivatedJob;
 import io.zeebe.client.api.subscription.JobWorker;
-import io.zeebe.exporter.record.Record;
-import io.zeebe.exporter.record.value.IncidentRecordValue;
+import io.zeebe.engine.processor.workflow.job.JobTimeoutTrigger;
+import io.zeebe.exporter.api.record.Record;
+import io.zeebe.exporter.api.record.value.IncidentRecordValue;
 import io.zeebe.model.bpmn.Bpmn;
 import io.zeebe.model.bpmn.BpmnModelInstance;
 import io.zeebe.protocol.clientapi.ValueType;
@@ -49,12 +48,9 @@ import io.zeebe.protocol.intent.JobIntent;
 import io.zeebe.protocol.intent.TimerIntent;
 import io.zeebe.protocol.intent.WorkflowInstanceIntent;
 import io.zeebe.protocol.intent.WorkflowInstanceSubscriptionIntent;
-import io.zeebe.raft.Raft;
-import io.zeebe.raft.RaftServiceNames;
-import io.zeebe.raft.state.RaftState;
-import io.zeebe.servicecontainer.ServiceName;
 import io.zeebe.test.util.TestUtil;
 import io.zeebe.test.util.record.RecordingExporter;
+import io.zeebe.test.util.record.WorkflowInstances;
 import io.zeebe.util.sched.clock.ControlledActorClock;
 import java.time.Duration;
 import java.util.Map;
@@ -76,7 +72,7 @@ import org.junit.runners.Parameterized.Parameters;
 public class BrokerReprocessingTest {
 
   private static final String PROCESS_ID = "process";
-  private static final String NULL_PAYLOAD = "{}";
+  private static final String NULL_VARIABLES = "{}";
 
   @Parameters(name = "{index}: {1}")
   public static Object[][] reprocessingTriggers() {
@@ -115,7 +111,7 @@ public class BrokerReprocessingTest {
   private static final BpmnModelInstance WORKFLOW_INCIDENT =
       Bpmn.createExecutableProcess(PROCESS_ID)
           .startEvent("start")
-          .serviceTask("task", t -> t.zeebeTaskType("test").zeebeInput("$.foo", "$.foo"))
+          .serviceTask("task", t -> t.zeebeTaskType("test").zeebeInput("foo", "foo"))
           .endEvent("end")
           .done();
 
@@ -123,7 +119,7 @@ public class BrokerReprocessingTest {
       Bpmn.createExecutableProcess(PROCESS_ID)
           .startEvent()
           .intermediateCatchEvent("catch-event")
-          .message(m -> m.name("order canceled").zeebeCorrelationKey("$.orderId"))
+          .message(m -> m.name("order canceled").zeebeCorrelationKey("orderId"))
           .sequenceFlowId("to-end")
           .endEvent()
           .done();
@@ -143,7 +139,7 @@ public class BrokerReprocessingTest {
 
   @Rule public ExpectedException exception = ExpectedException.none();
 
-  @Rule public Timeout timeout = new Timeout(30, TimeUnit.SECONDS);
+  @Rule public Timeout timeout = new Timeout(120, TimeUnit.SECONDS);
 
   private Runnable restartAction = () -> {};
 
@@ -190,7 +186,8 @@ public class BrokerReprocessingTest {
         .newWorker()
         .jobType("foo")
         .handler(
-            (client, job) -> client.newCompleteCommand(job.getKey()).payload(NULL_PAYLOAD).send())
+            (client, job) ->
+                client.newCompleteCommand(job.getKey()).variables(NULL_VARIABLES).send())
         .open();
 
     // then
@@ -251,7 +248,8 @@ public class BrokerReprocessingTest {
         .newWorker()
         .jobType("foo")
         .handler(
-            (client, job) -> client.newCompleteCommand(job.getKey()).payload(NULL_PAYLOAD).send())
+            (client, job) ->
+                client.newCompleteCommand(job.getKey()).variables(NULL_VARIABLES).send())
         .open();
 
     final CountDownLatch latch = new CountDownLatch(1);
@@ -277,7 +275,8 @@ public class BrokerReprocessingTest {
         .newWorker()
         .jobType("bar")
         .handler(
-            (client, job) -> client.newCompleteCommand(job.getKey()).payload(NULL_PAYLOAD).send())
+            (client, job) ->
+                client.newCompleteCommand(job.getKey()).variables(NULL_VARIABLES).send())
         .open();
 
     // then
@@ -332,16 +331,22 @@ public class BrokerReprocessingTest {
   public void shouldNotReceiveLockedJobAfterRestart() {
     // given
     clientRule.createSingleJob("foo");
+    RecordingExporter.jobRecords(JobIntent.CREATED).withType("foo").await();
 
-    final RecordingJobHandler jobHandler = new RecordingJobHandler();
-    clientRule.getClient().newWorker().jobType("foo").handler(jobHandler).open();
-
-    waitUntil(() -> !jobHandler.getHandledJobs().isEmpty());
+    TestUtil.doRepeatedly(
+            () ->
+                clientRule
+                    .getClient()
+                    .newActivateJobsCommand()
+                    .jobType("foo")
+                    .maxJobsToActivate(1)
+                    .send()
+                    .join()
+                    .getJobs())
+        .until(jobs -> !jobs.isEmpty());
 
     // when
     reprocessingTrigger.accept(this);
-
-    jobHandler.clear();
 
     // then
     awaitGateway();
@@ -350,7 +355,7 @@ public class BrokerReprocessingTest {
             .getClient()
             .newActivateJobsCommand()
             .jobType("foo")
-            .amount(10)
+            .maxJobsToActivate(10)
             .workerName("this")
             .send()
             .join();
@@ -397,13 +402,14 @@ public class BrokerReprocessingTest {
     // given
     deploy(WORKFLOW_INCIDENT, "incident.bpmn");
 
-    clientRule
-        .getClient()
-        .newCreateInstanceCommand()
-        .bpmnProcessId(PROCESS_ID)
-        .latestVersion()
-        .send()
-        .join();
+    final WorkflowInstanceEvent instanceEvent =
+        clientRule
+            .getClient()
+            .newCreateInstanceCommand()
+            .bpmnProcessId(PROCESS_ID)
+            .latestVersion()
+            .send()
+            .join();
 
     assertIncidentCreated();
     assertElementReady("task");
@@ -416,8 +422,8 @@ public class BrokerReprocessingTest {
 
     clientRule
         .getClient()
-        .newUpdatePayloadCommand(incident.getValue().getElementInstanceKey())
-        .payload("{\"foo\":\"bar\"}")
+        .newSetVariablesCommand(instanceEvent.getWorkflowInstanceKey())
+        .variables("{\"foo\":\"bar\"}")
         .send()
         .join();
 
@@ -450,8 +456,8 @@ public class BrokerReprocessingTest {
 
     clientRule
         .getClient()
-        .newUpdatePayloadCommand(incident.getValue().getElementInstanceKey())
-        .payload("{\"x\":\"y\"}")
+        .newSetVariablesCommand(instanceEvent.getWorkflowInstanceKey())
+        .variables("{\"x\":\"y\"}")
         .send()
         .join();
 
@@ -466,8 +472,8 @@ public class BrokerReprocessingTest {
 
     clientRule
         .getClient()
-        .newUpdatePayloadCommand(incident.getValue().getElementInstanceKey())
-        .payload("{\"foo\":\"bar\"}")
+        .newSetVariablesCommand(instanceEvent.getWorkflowInstanceKey())
+        .variables("{\"foo\":\"bar\"}")
         .send()
         .join();
 
@@ -476,32 +482,6 @@ public class BrokerReprocessingTest {
     // then
     assertIncidentResolved();
     assertJobCreated("test");
-  }
-
-  @Test
-  public void shouldLoadRaftConfiguration() {
-    // given
-    final int testTerm = 8;
-
-    final ServiceName<Raft> serviceName =
-        RaftServiceNames.raftServiceName(Partition.getPartitionName(0));
-
-    final Raft raft = brokerRule.getService(serviceName);
-    waitUntil(() -> raft.getState() == RaftState.LEADER);
-
-    raft.setTerm(testTerm);
-
-    // when
-    reprocessingTrigger.accept(this);
-
-    final Raft raftAfterRestart = brokerRule.getService(serviceName);
-    waitUntil(() -> raftAfterRestart.getState() == RaftState.LEADER);
-
-    // then
-    assertThat(raftAfterRestart.getState()).isEqualTo(RaftState.LEADER);
-    assertThat(raftAfterRestart.getTerm()).isGreaterThanOrEqualTo(9);
-    assertThat(raftAfterRestart.getMemberSize()).isEqualTo(0);
-    assertThat(raftAfterRestart.getVotedFor()).isEqualTo(0);
   }
 
   @Test
@@ -618,18 +598,14 @@ public class BrokerReprocessingTest {
 
     // then
     assertThat(
-            RecordingExporter.workflowInstanceRecords(WorkflowInstanceIntent.EVENT_TRIGGERED)
+            RecordingExporter.workflowInstanceRecords(WorkflowInstanceIntent.ELEMENT_COMPLETED)
                 .withElementId("catch-event")
                 .exists())
         .isTrue();
 
-    assertWorkflowInstanceCompleted(
-        PROCESS_ID,
-        (workflowInstance) -> {
-          assertThat(workflowInstance.getWorkflowInstanceKey()).isEqualTo(workflowInstanceKey);
-          assertThat(workflowInstance.getPayloadAsMap())
-              .containsOnly(entry("orderId", "order-123"), entry("foo", "bar"));
-        });
+    assertWorkflowInstanceCompleted(workflowInstanceKey);
+    assertThat(WorkflowInstances.getCurrentVariables(workflowInstanceKey))
+        .containsOnly(entry("foo", "\"bar\""), entry("orderId", "\"order-123\""));
   }
 
   @Test
@@ -645,19 +621,15 @@ public class BrokerReprocessingTest {
         startWorkflowInstance(PROCESS_ID, singletonMap("orderId", "order-123"))
             .getWorkflowInstanceKey();
     assertThat(
-            RecordingExporter.workflowInstanceRecords(WorkflowInstanceIntent.EVENT_TRIGGERED)
+            RecordingExporter.workflowInstanceRecords(WorkflowInstanceIntent.ELEMENT_COMPLETED)
                 .withElementId("catch-event")
                 .exists())
         .isTrue();
 
     // then
-    assertWorkflowInstanceCompleted(
-        PROCESS_ID,
-        (workflowInstance) -> {
-          assertThat(workflowInstance.getWorkflowInstanceKey()).isEqualTo(workflowInstanceKey);
-          assertThat(workflowInstance.getPayloadAsMap())
-              .containsOnly(entry("orderId", "order-123"), entry("foo", "bar"));
-        });
+    assertWorkflowInstanceCompleted(workflowInstanceKey);
+    assertThat(WorkflowInstances.getCurrentVariables(workflowInstanceKey))
+        .containsOnly(entry("foo", "\"bar\""), entry("orderId", "\"order-123\""));
   }
 
   @Test
@@ -675,7 +647,7 @@ public class BrokerReprocessingTest {
 
     // then
     assertThat(
-            RecordingExporter.workflowInstanceRecords(WorkflowInstanceIntent.EVENT_TRIGGERED)
+            RecordingExporter.workflowInstanceRecords(WorkflowInstanceIntent.ELEMENT_COMPLETED)
                 .withElementId("timer")
                 .exists())
         .isTrue();
@@ -692,25 +664,25 @@ public class BrokerReprocessingTest {
   }
 
   protected WorkflowInstanceEvent startWorkflowInstance(
-      final String bpmnProcessId, final Map<String, Object> payload) {
+      final String bpmnProcessId, final Map<String, Object> variables) {
     return clientRule
         .getClient()
         .newCreateInstanceCommand()
         .bpmnProcessId(bpmnProcessId)
         .latestVersion()
-        .payload(payload)
+        .variables(variables)
         .send()
         .join();
   }
 
   protected void publishMessage(
-      final String messageName, final String correlationKey, final Map<String, Object> payload) {
+      final String messageName, final String correlationKey, final Map<String, Object> variables) {
     clientRule
         .getClient()
         .newPublishMessageCommand()
         .messageName(messageName)
         .correlationKey(correlationKey)
-        .payload(payload)
+        .variables(variables)
         .send()
         .join();
   }
@@ -781,8 +753,7 @@ public class BrokerReprocessingTest {
         () -> {
           clock.addTime(pollingInterval);
           // not using RecordingExporter.jobRecords cause it is blocking
-          return RecordingExporter.getRecords()
-              .stream()
+          return RecordingExporter.getRecords().stream()
               .filter(r -> r.getMetadata().getValueType() == ValueType.JOB)
               .anyMatch(r -> r.getMetadata().getIntent() == JobIntent.TIMED_OUT);
         });

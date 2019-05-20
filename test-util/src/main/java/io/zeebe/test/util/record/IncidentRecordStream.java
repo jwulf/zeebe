@@ -15,8 +15,8 @@
  */
 package io.zeebe.test.util.record;
 
-import io.zeebe.exporter.record.Record;
-import io.zeebe.exporter.record.value.IncidentRecordValue;
+import io.zeebe.exporter.api.record.Record;
+import io.zeebe.exporter.api.record.value.IncidentRecordValue;
 import java.util.stream.Stream;
 
 public class IncidentRecordStream
@@ -41,6 +41,10 @@ public class IncidentRecordStream
 
   public IncidentRecordStream withBpmnProcessId(final String bpmnProcessId) {
     return valueFilter(v -> bpmnProcessId.equals(v.getBpmnProcessId()));
+  }
+
+  public IncidentRecordStream withElementId(final String elementId) {
+    return valueFilter(v -> elementId.equals(v.getElementId()));
   }
 
   public IncidentRecordStream withWorkflowInstanceKey(final long workflowInstanceKey) {

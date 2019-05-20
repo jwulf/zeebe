@@ -16,17 +16,19 @@
 package io.zeebe.broker.it.util;
 
 import static io.zeebe.protocol.intent.WorkflowInstanceIntent.ELEMENT_ACTIVATED;
+import static io.zeebe.protocol.intent.WorkflowInstanceIntent.ELEMENT_ACTIVATING;
 import static io.zeebe.protocol.intent.WorkflowInstanceIntent.ELEMENT_COMPLETED;
-import static io.zeebe.protocol.intent.WorkflowInstanceIntent.ELEMENT_READY;
 import static io.zeebe.protocol.intent.WorkflowInstanceIntent.ELEMENT_TERMINATED;
-import static io.zeebe.protocol.intent.WorkflowInstanceIntent.PAYLOAD_UPDATED;
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.zeebe.exporter.record.Record;
-import io.zeebe.exporter.record.value.JobRecordValue;
-import io.zeebe.exporter.record.value.WorkflowInstanceRecordValue;
+import io.zeebe.exporter.api.record.Record;
+import io.zeebe.exporter.api.record.value.JobRecordValue;
+import io.zeebe.exporter.api.record.value.VariableDocumentRecordValue;
+import io.zeebe.exporter.api.record.value.WorkflowInstanceRecordValue;
+import io.zeebe.protocol.BpmnElementType;
 import io.zeebe.protocol.intent.IncidentIntent;
 import io.zeebe.protocol.intent.JobIntent;
+import io.zeebe.protocol.intent.VariableDocumentIntent;
 import io.zeebe.protocol.intent.WorkflowInstanceIntent;
 import io.zeebe.test.util.record.RecordingExporter;
 import io.zeebe.test.util.record.WorkflowInstanceRecordStream;
@@ -39,16 +41,11 @@ public class ZeebeAssertHelper {
   }
 
   public static void assertWorkflowInstanceCreated(long workflowInstanceKey) {
-    assertThat(
-            RecordingExporter.workflowInstanceRecords(WorkflowInstanceIntent.ELEMENT_READY)
-                .withKey(workflowInstanceKey)
-                .withWorkflowInstanceKey(workflowInstanceKey)
-                .exists())
-        .isTrue();
+    assertWorkflowInstanceCreated(workflowInstanceKey, w -> {});
   }
 
   public static void assertWorkflowInstanceCreated(Consumer<WorkflowInstanceRecordValue> consumer) {
-    assertWorkflowInstanceState(WorkflowInstanceIntent.ELEMENT_READY, consumer);
+    assertWorkflowInstanceState(WorkflowInstanceIntent.ELEMENT_ACTIVATING, consumer);
   }
 
   public static void assertJobCreated(String jobType) {
@@ -68,12 +65,30 @@ public class ZeebeAssertHelper {
     assertThat(RecordingExporter.incidentRecords(IncidentIntent.CREATED).exists()).isTrue();
   }
 
+  public static void assertWorkflowInstanceCompleted(
+      long workflowInstanceKey, Consumer<WorkflowInstanceRecordValue> consumer) {
+    final Record<WorkflowInstanceRecordValue> record =
+        RecordingExporter.workflowInstanceRecords(ELEMENT_COMPLETED)
+            .withRecordKey(workflowInstanceKey)
+            .getFirst();
+
+    assertThat(record).isNotNull();
+
+    if (consumer != null) {
+      consumer.accept(record.getValue());
+    }
+  }
+
+  public static void assertWorkflowInstanceCompleted(long workflowInstanceKey) {
+    assertWorkflowInstanceCompleted(workflowInstanceKey, r -> {});
+  }
+
   public static void assertElementActivated(String element) {
     assertElementInState(ELEMENT_ACTIVATED, element, (e) -> {});
   }
 
   public static void assertElementReady(String element) {
-    assertElementInState(ELEMENT_READY, element, (e) -> {});
+    assertElementInState(ELEMENT_ACTIVATING, element, (e) -> {});
   }
 
   public static void assertWorkflowInstanceCanceled(String bpmnId) {
@@ -150,13 +165,21 @@ public class ZeebeAssertHelper {
     eventConsumer.accept(workflowInstanceRecordValueRecord.getValue());
   }
 
-  public static void assertWorkflowInstancePayloadUpdated() {
-    assertWorkflowInstancePayloadUpdated((e) -> {});
+  public static void assertWorkflowInstanceState(
+      long workflowInstanceKey,
+      WorkflowInstanceIntent intent,
+      Consumer<WorkflowInstanceRecordValue> consumer) {
+    consumeFirstWorkflowInstanceRecord(
+        RecordingExporter.workflowInstanceRecords(intent)
+            .withWorkflowInstanceKey(workflowInstanceKey)
+            .filter(r -> r.getKey() == r.getValue().getWorkflowInstanceKey()),
+        consumer);
   }
 
-  public static void assertWorkflowInstancePayloadUpdated(
-      Consumer<WorkflowInstanceRecordValue> eventConsumer) {
-    assertWorkflowInstanceState(PAYLOAD_UPDATED, eventConsumer);
+  public static void assertWorkflowInstanceCreated(
+      long workflowInstanceKey, Consumer<WorkflowInstanceRecordValue> consumer) {
+    assertWorkflowInstanceState(
+        workflowInstanceKey, WorkflowInstanceIntent.ELEMENT_ACTIVATING, consumer);
   }
 
   public static void assertWorkflowInstanceState(
@@ -165,6 +188,32 @@ public class ZeebeAssertHelper {
         RecordingExporter.workflowInstanceRecords(intent)
             .filter(r -> r.getKey() == r.getValue().getWorkflowInstanceKey()),
         consumer);
+  }
+
+  public static void assertElementInState(
+      long workflowInstanceKey, String elementId, WorkflowInstanceIntent intent) {
+    final Record<WorkflowInstanceRecordValue> record =
+        RecordingExporter.workflowInstanceRecords(intent)
+            .withWorkflowInstanceKey(workflowInstanceKey)
+            .withElementId(elementId)
+            .getFirst();
+
+    assertThat(record).isNotNull();
+  }
+
+  public static void assertElementInState(
+      long workflowInstanceKey,
+      String elementId,
+      BpmnElementType elementType,
+      WorkflowInstanceIntent intent) {
+    final Record<WorkflowInstanceRecordValue> record =
+        RecordingExporter.workflowInstanceRecords(intent)
+            .withWorkflowInstanceKey(workflowInstanceKey)
+            .withElementType(elementType)
+            .withElementId(elementId)
+            .getFirst();
+
+    assertThat(record).isNotNull();
   }
 
   public static void assertElementInState(
@@ -198,5 +247,18 @@ public class ZeebeAssertHelper {
                 .filter(e -> e.getMetadata().getIntent() == IncidentIntent.CREATED)
                 .exists())
         .isTrue();
+  }
+
+  public static void assertVariableDocumentUpdated() {
+    assertVariableDocumentUpdated(e -> {});
+  }
+
+  public static void assertVariableDocumentUpdated(
+      Consumer<VariableDocumentRecordValue> eventConsumer) {
+    final Record<VariableDocumentRecordValue> record =
+        RecordingExporter.variableDocumentRecords(VariableDocumentIntent.UPDATED).getFirst();
+
+    assertThat(record).isNotNull();
+    eventConsumer.accept(record.getValue());
   }
 }

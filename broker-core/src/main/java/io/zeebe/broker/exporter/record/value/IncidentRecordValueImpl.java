@@ -19,7 +19,7 @@ package io.zeebe.broker.exporter.record.value;
 
 import io.zeebe.broker.exporter.ExporterObjectMapper;
 import io.zeebe.broker.exporter.record.RecordValueImpl;
-import io.zeebe.exporter.record.value.IncidentRecordValue;
+import io.zeebe.exporter.api.record.value.IncidentRecordValue;
 import java.util.Objects;
 
 public class IncidentRecordValueImpl extends RecordValueImpl implements IncidentRecordValue {
@@ -27,9 +27,11 @@ public class IncidentRecordValueImpl extends RecordValueImpl implements Incident
   private final String errorMessage;
   private final String bpmnProcessId;
   private final String elementId;
+  private final long workflowKey;
   private final long workflowInstanceKey;
   private final long elementInstanceKey;
   private final long jobKey;
+  private final long variableScopeKey;
 
   public IncidentRecordValueImpl(
       final ExporterObjectMapper objectMapper,
@@ -37,17 +39,21 @@ public class IncidentRecordValueImpl extends RecordValueImpl implements Incident
       final String errorMessage,
       final String bpmnProcessId,
       final String elementId,
+      final long workflowKey,
       final long workflowInstanceKey,
       final long elementInstanceKey,
-      final long jobKey) {
+      final long jobKey,
+      final long variableScopeKey) {
     super(objectMapper);
     this.errorType = errorType;
     this.errorMessage = errorMessage;
     this.bpmnProcessId = bpmnProcessId;
     this.elementId = elementId;
+    this.workflowKey = workflowKey;
     this.workflowInstanceKey = workflowInstanceKey;
     this.elementInstanceKey = elementInstanceKey;
     this.jobKey = jobKey;
+    this.variableScopeKey = variableScopeKey;
   }
 
   @Override
@@ -71,6 +77,11 @@ public class IncidentRecordValueImpl extends RecordValueImpl implements Incident
   }
 
   @Override
+  public long getWorkflowKey() {
+    return workflowKey;
+  }
+
+  @Override
   public long getWorkflowInstanceKey() {
     return workflowInstanceKey;
   }
@@ -86,6 +97,11 @@ public class IncidentRecordValueImpl extends RecordValueImpl implements Incident
   }
 
   @Override
+  public long getVariableScopeKey() {
+    return variableScopeKey;
+  }
+
+  @Override
   public boolean equals(final Object o) {
     if (this == o) {
       return true;
@@ -98,6 +114,7 @@ public class IncidentRecordValueImpl extends RecordValueImpl implements Incident
     return workflowInstanceKey == that.workflowInstanceKey
         && elementInstanceKey == that.elementInstanceKey
         && jobKey == that.jobKey
+        && variableScopeKey == that.variableScopeKey
         && Objects.equals(errorType, that.errorType)
         && Objects.equals(errorMessage, that.errorMessage)
         && Objects.equals(bpmnProcessId, that.bpmnProcessId)
@@ -114,7 +131,8 @@ public class IncidentRecordValueImpl extends RecordValueImpl implements Incident
         elementId,
         workflowInstanceKey,
         elementInstanceKey,
-        jobKey);
+        jobKey,
+        variableScopeKey);
   }
 
   @Override
@@ -138,6 +156,8 @@ public class IncidentRecordValueImpl extends RecordValueImpl implements Incident
         + elementInstanceKey
         + ", jobKey="
         + jobKey
+        + ", variableScopeKey="
+        + variableScopeKey
         + '}';
   }
 }

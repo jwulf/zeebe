@@ -21,7 +21,7 @@
             "timeout": {
               "type": "date"
             },
-            "amount": {
+            "maxJobsToActivate": {
               "type": "integer"
             },
             "jobKeys": {
@@ -69,13 +69,16 @@
                 "deadline": {
                   "type": "date"
                 },
-                "payload": {
+                "variables": {
                   "type": "text"
                 },
                 "errorMessage": {
                   "type": "text"
                 }
               }
+            },
+            "truncated": {
+              "type": "boolean"
             }
           }
         }

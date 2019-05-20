@@ -15,19 +15,12 @@
  */
 package io.zeebe.logstreams.impl.log.index;
 
-import static io.zeebe.logstreams.impl.log.index.LogBlockIndexDescriptor.dataOffset;
-import static io.zeebe.logstreams.impl.log.index.LogBlockIndexDescriptor.entryAddressOffset;
-import static io.zeebe.logstreams.impl.log.index.LogBlockIndexDescriptor.entryLength;
-import static io.zeebe.logstreams.impl.log.index.LogBlockIndexDescriptor.entryLogPositionOffset;
-import static io.zeebe.logstreams.impl.log.index.LogBlockIndexDescriptor.entryOffset;
-import static io.zeebe.logstreams.impl.log.index.LogBlockIndexDescriptor.indexSizeOffset;
-
-import io.zeebe.logstreams.spi.SnapshotSupport;
-import io.zeebe.util.StreamUtil;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.function.Function;
-import org.agrona.concurrent.AtomicBuffer;
+import io.zeebe.db.ColumnFamily;
+import io.zeebe.db.ZeebeDb;
+import io.zeebe.db.impl.DbLong;
+import io.zeebe.logstreams.impl.Loggers;
+import io.zeebe.logstreams.state.StateSnapshotController;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Block index, mapping an event's position to the physical address of the block in which it resides
@@ -41,208 +34,203 @@ import org.agrona.concurrent.AtomicBuffer;
  * block in which it resides in storage. Then, the block can be scanned for the event position
  * requested.
  */
-public class LogBlockIndex implements SnapshotSupport {
-  protected final AtomicBuffer indexBuffer;
+public class LogBlockIndex {
+  private static final String ERROR_MSG_ENSURING_MAX_SNAPSHOT_COUNT =
+      "Unexpected exception occurred on ensuring maximum snapshot count.";
 
-  protected final int capacity;
+  public static final int VALUE_NOT_FOUND = -1;
+  private long lastVirtualPosition = VALUE_NOT_FOUND;
 
-  protected long lastVirtualPosition = -1;
+  private final StateSnapshotController stateSnapshotController;
+  private ZeebeDb<LogBlockColumnFamilies> zeebeDb;
+  private ColumnFamily<DbLong, DbLong> indexColumnFamily;
 
-  public LogBlockIndex(int capacity, Function<Integer, AtomicBuffer> bufferAllocator) {
-    final int requiredBufferCapacity = dataOffset() + (capacity * entryLength());
+  public LogBlockIndex(StateSnapshotController snapshotController) {
+    this.stateSnapshotController = snapshotController;
+    tryToRestoreAndOpen();
+  }
 
-    this.indexBuffer = bufferAllocator.apply(requiredBufferCapacity);
-    this.capacity = capacity;
+  private void tryToRestoreAndOpen() {
+    try {
+      lastVirtualPosition = stateSnapshotController.recover();
+    } catch (Exception e) {
+      Loggers.ROCKSDB_LOGGER.debug("Log block index failed to recover from snapshot", e);
+    }
 
-    reset();
+    zeebeDb = stateSnapshotController.openDb();
+    indexColumnFamily =
+        zeebeDb.createColumnFamily(
+            LogBlockColumnFamilies.BLOCK_POSITION_ADDRESS,
+            zeebeDb.createContext(),
+            new DbLong(),
+            new DbLong());
+  }
+
+  public void closeDb() throws Exception {
+    if (zeebeDb != null) {
+      stateSnapshotController.close();
+      zeebeDb = null;
+      indexColumnFamily = null;
+    }
   }
 
   /**
    * Returns the physical address of the block in which the log entry identified by the provided
    * position resides.
    *
-   * @param position a virtual log position
+   * @param indexContext the log block index context
+   * @param entryPosition a virtual log position
    * @return the physical address of the block containing the log entry identified by the provided
    *     virtual position
    */
-  public long lookupBlockAddress(long position) {
-    final int offset = lookupOffset(position);
-    return offset >= 0 ? indexBuffer.getLong(entryAddressOffset(offset)) : offset;
+  public long lookupBlockAddress(
+      final LogBlockIndexContext indexContext, final long entryPosition) {
+    final long blockPosition = lookupBlockPosition(indexContext, entryPosition);
+    if (blockPosition == VALUE_NOT_FOUND) {
+      return VALUE_NOT_FOUND;
+    }
+
+    final DbLong dbBlockPosition = indexContext.writeKeyInstance(blockPosition);
+    final DbLong address =
+        indexColumnFamily.get(
+            indexContext.getDbContext(), dbBlockPosition, indexContext.getValueInstance());
+
+    return address != null ? address.getValue() : VALUE_NOT_FOUND;
   }
 
   /**
    * Returns the position of the first log entry of the the block in which the log entry identified
    * by the provided position resides.
    *
-   * @param position a virtual log position
+   * @param indexContext the log block index context
+   * @param entryPosition a virtual log position
    * @return the position of the block containing the log entry identified by the provided virtual
    *     position
    */
-  public long lookupBlockPosition(long position) {
-    final int offset = lookupOffset(position);
-    return offset >= 0 ? indexBuffer.getLong(entryLogPositionOffset(offset)) : offset;
+  public long lookupBlockPosition(
+      final LogBlockIndexContext indexContext, final long entryPosition) {
+    final AtomicLong blockPosition = new AtomicLong(VALUE_NOT_FOUND);
+
+    indexColumnFamily.whileTrue(
+        indexContext.getDbContext(),
+        (key, val) -> {
+          final long currentBlockPosition = key.getValue();
+
+          if (currentBlockPosition <= entryPosition) {
+            blockPosition.set(currentBlockPosition);
+            return true;
+          } else {
+            return false;
+          }
+        },
+        indexContext.getKeyInstance(),
+        indexContext.getValueInstance());
+
+    return blockPosition.get();
   }
 
   /**
-   * Returns the offset of the block in which the log entry identified by the provided position
-   * resides.
+   * Adds a mapping between a block's position and its address to the log block index.
    *
-   * @param position a virtual log position
-   * @return the offset of the block containing the log entry identified by the provided virtual
-   *     position
+   * @param indexContext the log block index context
+   * @param blockPosition the block's position
+   * @param blockAddress the block's address
    */
-  protected int lookupOffset(long position) {
-    final int idx = lookupIndex(position);
-    return idx >= 0 ? entryOffset(idx) : idx;
-  }
-
-  /**
-   * Returns the index of the block in which the log entry identified by the provided position
-   * resides.
-   *
-   * @param position a virtual log position
-   * @return the index of the block containing the log entry identified by the provided virtual
-   *     position
-   */
-  protected int lookupIndex(long position) {
-    final int lastEntryIdx = size() - 1;
-
-    int low = 0;
-    int high = lastEntryIdx;
-
-    int idx = -1;
-
-    if (low == high) {
-      final int entryOffset = entryOffset(low);
-      final long entryValue = indexBuffer.getLong(entryLogPositionOffset(entryOffset));
-
-      if (entryValue <= position) {
-        idx = low;
-      }
-
-      high = -1;
-    }
-
-    while (low <= high) {
-      final int mid = (low + high) >>> 1;
-      final int entryOffset = entryOffset(mid);
-
-      if (mid == lastEntryIdx) {
-        idx = mid;
-        break;
-      } else {
-        final long entryValue = indexBuffer.getLong(entryLogPositionOffset(entryOffset));
-        final long nextEntryValue =
-            indexBuffer.getLong(entryLogPositionOffset(entryOffset(mid + 1)));
-
-        if (entryValue <= position && position < nextEntryValue) {
-          idx = mid;
-          break;
-        } else if (entryValue < position) {
-          low = mid + 1;
-        } else if (entryValue > position) {
-          high = mid - 1;
-        }
-      }
-    }
-
-    return idx;
-  }
-
-  /**
-   * Invoked by the log Appender thread after it has first written one or more entries to a block.
-   *
-   * @param logPosition the virtual position of the block (equal or smaller to the v position of the
-   *     first entry in the block)
-   * @param storageAddr the physical address of the block in the underlying storage
-   * @return the new size of the index.
-   */
-  public int addBlock(long logPosition, long storageAddr) {
-    final int currentIndexSize =
-        indexBuffer.getInt(indexSizeOffset()); // volatile get not necessary
-    final int entryOffset = entryOffset(currentIndexSize);
-    final int newIndexSize = 1 + currentIndexSize;
-
-    if (newIndexSize > capacity) {
-      throw new RuntimeException(
-          String.format(
-              "LogBlockIndex capacity of %d entries reached. Cannot add new block.", capacity));
-    }
-
-    if (lastVirtualPosition >= logPosition) {
+  public void addBlock(
+      final LogBlockIndexContext indexContext, final long blockPosition, final long blockAddress) {
+    if (lastVirtualPosition >= blockPosition) {
       final String errorMessage =
           String.format(
               "Illegal value for position.Value=%d, last value in index=%d. Must provide positions in ascending order.",
-              logPosition, lastVirtualPosition);
+              blockPosition, lastVirtualPosition);
       throw new IllegalArgumentException(errorMessage);
     }
 
-    lastVirtualPosition = logPosition;
+    final DbLong dbBlockPosition = indexContext.writeKeyInstance(blockPosition);
+    final DbLong dbBlockAddress = indexContext.writeValueInstance(blockAddress);
 
-    // write next entry
-    indexBuffer.putLong(entryLogPositionOffset(entryOffset), logPosition);
-    indexBuffer.putLong(entryAddressOffset(entryOffset), storageAddr);
-
-    // increment size
-    indexBuffer.putIntOrdered(indexSizeOffset(), newIndexSize);
-
-    return newIndexSize;
+    indexColumnFamily.put(indexContext.getDbContext(), dbBlockPosition, dbBlockAddress);
+    lastVirtualPosition = blockPosition;
   }
 
-  /** @return the current size of the index */
-  public int size() {
-    return indexBuffer.getIntVolatile(indexSizeOffset());
+  /**
+   * Deletes mappings up to {@code deletePosition}, with the exception of the last entry in the
+   * index, which will not be deleted. Therefore, this method should be used solely as a best-effort
+   * attempt to free-up disk space and not as a dependable delete operation.
+   *
+   * @param indexContext the log block index context
+   * @param deletePosition the position up to which entries will be deleted
+   */
+  public void deleteUpToPosition(
+      final LogBlockIndexContext indexContext, final long deletePosition) {
+    final AtomicLong lastBlockPosition = new AtomicLong(VALUE_NOT_FOUND);
+
+    indexColumnFamily.whileTrue(
+        indexContext.getDbContext(),
+        (key, val) -> {
+          final long storedBlockPosition = key.getValue();
+
+          if (storedBlockPosition <= deletePosition) {
+            if (lastBlockPosition.get() != VALUE_NOT_FOUND) {
+              deleteEntry(indexContext, lastBlockPosition.get());
+            }
+
+            lastBlockPosition.set(storedBlockPosition);
+            return true;
+          }
+
+          return false;
+        },
+        indexContext.getKeyInstance(),
+        indexContext.getValueInstance());
   }
 
-  /** @return the capacity of the index */
-  public int capacity() {
-    return capacity;
+  private void deleteEntry(final LogBlockIndexContext indexContext, final long blockPosition) {
+    final DbLong dbBlockPosition = indexContext.writeKeyInstance(blockPosition);
+    indexColumnFamily.delete(indexContext.getDbContext(), dbBlockPosition);
   }
 
-  public long getLogPosition(int idx) {
-    boundsCheck(idx, size());
-
-    final int entryOffset = entryOffset(idx);
-
-    return indexBuffer.getLong(entryLogPositionOffset(entryOffset));
+  /**
+   * Checks if the log block index has entries.
+   *
+   * @param indexContext the log block index context
+   * @return <code>true</code> if the index has no entry
+   */
+  public boolean isEmpty(final LogBlockIndexContext indexContext) {
+    return indexColumnFamily.isEmpty(indexContext.getDbContext());
   }
 
-  public long getAddress(int idx) {
-    boundsCheck(idx, size());
+  /**
+   * Writes a snapshot with the provided position as last written position
+   *
+   * @param snapshotEventPosition last written position
+   */
+  public void writeSnapshot(final long snapshotEventPosition, final int maxSnapshots) {
+    stateSnapshotController.takeSnapshot(snapshotEventPosition);
 
-    final int entryOffset = entryOffset(idx);
-
-    return indexBuffer.getLong(entryAddressOffset(entryOffset));
-  }
-
-  private static void boundsCheck(int idx, int size) {
-    if (idx < 0 || idx >= size) {
-      throw new IllegalArgumentException(
-          String.format("Index out of bounds. index=%d, size=%d.", idx, size));
+    try {
+      stateSnapshotController.ensureMaxSnapshotCount(maxSnapshots);
+    } catch (Exception e) {
+      Loggers.SNAPSHOT_LOGGER.error(ERROR_MSG_ENSURING_MAX_SNAPSHOT_COUNT, e);
     }
   }
 
-  @Override
-  public long writeSnapshot(OutputStream outputStream) throws Exception {
-    StreamUtil.write(indexBuffer, outputStream);
-    return indexBuffer.capacity();
+  /**
+   * Returns the last position written to the index or read from a snapshot.
+   *
+   * @return the last written position
+   */
+  public long getLastPosition() {
+    return lastVirtualPosition;
   }
 
-  @Override
-  public void recoverFromSnapshot(InputStream inputStream) throws Exception {
-    final byte[] byteArray = StreamUtil.read(inputStream);
-
-    indexBuffer.putBytes(0, byteArray);
-  }
-
-  @Override
-  public void reset() {
-    // verify alignment to ensure atomicity of updates to the index metadata
-    indexBuffer.verifyAlignment();
-
-    // set initial size
-    indexBuffer.putIntVolatile(indexSizeOffset(), 0);
-
-    indexBuffer.setMemory(dataOffset(), capacity * entryLength(), (byte) 0);
+  /**
+   * Returns a log block index context which contain the required state to use the index in a
+   * thread-safe manner, including the DbContext required to interact with the database.
+   *
+   * @return a newly created log block index context
+   */
+  public LogBlockIndexContext createLogBlockIndexContext() {
+    return new LogBlockIndexContext(zeebeDb.createContext());
   }
 }

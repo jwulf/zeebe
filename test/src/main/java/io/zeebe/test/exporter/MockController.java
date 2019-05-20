@@ -15,7 +15,7 @@
  */
 package io.zeebe.test.exporter;
 
-import io.zeebe.exporter.context.Controller;
+import io.zeebe.exporter.api.context.Controller;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -61,8 +61,7 @@ public class MockController implements Controller {
   public void runScheduledTasks(Duration elapsed) {
     final Duration upperBound = elapsed.plusMillis(lastRanAtMs);
 
-    scheduledTasks
-        .stream()
+    scheduledTasks.stream()
         .filter(t -> t.getDelay().compareTo(upperBound) <= 0)
         .sorted(Comparator.comparing(MockScheduledTask::getDelay))
         .forEach(MockScheduledTask::run);

@@ -18,35 +18,38 @@
 package io.zeebe.broker.exporter.record.value;
 
 import io.zeebe.broker.exporter.ExporterObjectMapper;
-import io.zeebe.broker.exporter.record.RecordValueWithPayloadImpl;
-import io.zeebe.exporter.record.value.WorkflowInstanceRecordValue;
+import io.zeebe.broker.exporter.record.RecordValueImpl;
+import io.zeebe.exporter.api.record.value.WorkflowInstanceRecordValue;
+import io.zeebe.protocol.BpmnElementType;
 import java.util.Objects;
 
-public class WorkflowInstanceRecordValueImpl extends RecordValueWithPayloadImpl
+public class WorkflowInstanceRecordValueImpl extends RecordValueImpl
     implements WorkflowInstanceRecordValue {
   private final String bpmnProcessId;
   private final String elementId;
   private final int version;
   private final long workflowKey;
   private final long workflowInstanceKey;
-  private final long scopeInstanceKey;
+  private final long flowScopeKey;
+  private final BpmnElementType bpmnElementType;
 
   public WorkflowInstanceRecordValueImpl(
       final ExporterObjectMapper objectMapper,
-      final String payload,
       final String bpmnProcessId,
       final String elementId,
       final int version,
       final long workflowKey,
       final long workflowInstanceKey,
-      final long scopeInstanceKey) {
-    super(objectMapper, payload);
+      final long flowScopeKey,
+      final BpmnElementType bpmnElementType) {
+    super(objectMapper);
     this.bpmnProcessId = bpmnProcessId;
     this.elementId = elementId;
     this.version = version;
     this.workflowKey = workflowKey;
     this.workflowInstanceKey = workflowInstanceKey;
-    this.scopeInstanceKey = scopeInstanceKey;
+    this.flowScopeKey = flowScopeKey;
+    this.bpmnElementType = bpmnElementType;
   }
 
   @Override
@@ -75,8 +78,13 @@ public class WorkflowInstanceRecordValueImpl extends RecordValueWithPayloadImpl
   }
 
   @Override
-  public long getScopeInstanceKey() {
-    return scopeInstanceKey;
+  public long getFlowScopeKey() {
+    return flowScopeKey;
+  }
+
+  @Override
+  public BpmnElementType getBpmnElementType() {
+    return bpmnElementType;
   }
 
   @Override
@@ -87,16 +95,15 @@ public class WorkflowInstanceRecordValueImpl extends RecordValueWithPayloadImpl
     if (o == null || getClass() != o.getClass()) {
       return false;
     }
-    if (!super.equals(o)) {
-      return false;
-    }
+
     final WorkflowInstanceRecordValueImpl that = (WorkflowInstanceRecordValueImpl) o;
     return version == that.version
         && workflowKey == that.workflowKey
         && workflowInstanceKey == that.workflowInstanceKey
-        && scopeInstanceKey == that.scopeInstanceKey
+        && flowScopeKey == that.flowScopeKey
         && Objects.equals(bpmnProcessId, that.bpmnProcessId)
-        && Objects.equals(elementId, that.elementId);
+        && Objects.equals(elementId, that.elementId)
+        && bpmnElementType == that.bpmnElementType;
   }
 
   @Override
@@ -108,7 +115,8 @@ public class WorkflowInstanceRecordValueImpl extends RecordValueWithPayloadImpl
         version,
         workflowKey,
         workflowInstanceKey,
-        scopeInstanceKey);
+        flowScopeKey,
+        bpmnElementType);
   }
 
   @Override
@@ -126,11 +134,10 @@ public class WorkflowInstanceRecordValueImpl extends RecordValueWithPayloadImpl
         + workflowKey
         + ", workflowInstanceKey="
         + workflowInstanceKey
-        + ", scopeInstanceKey="
-        + scopeInstanceKey
-        + ", payload='"
-        + payload
-        + '\''
+        + ", flowScopeKey="
+        + flowScopeKey
+        + ", bpmnElementType="
+        + bpmnElementType
         + '}';
   }
 }

@@ -20,13 +20,18 @@ import io.zeebe.client.ClientProperties;
 import io.zeebe.client.ZeebeClient;
 import io.zeebe.client.api.events.WorkflowInstanceEvent;
 import io.zeebe.test.util.record.RecordingExporter;
+import io.zeebe.test.util.record.RecordingExporterTestWatcher;
 import java.util.Properties;
 import java.util.function.Supplier;
 import org.junit.rules.ExternalResource;
+import org.junit.runner.Description;
+import org.junit.runners.model.Statement;
 
 public class ZeebeTestRule extends ExternalResource {
   private final EmbeddedBrokerRule brokerRule;
   private final ClientRule clientRule;
+  protected final RecordingExporterTestWatcher recordingExporterTestWatcher =
+      new RecordingExporterTestWatcher();
 
   public ZeebeTestRule() {
     this(EmbeddedBrokerRule.DEFAULT_CONFIG_FILE, Properties::new);
@@ -60,6 +65,12 @@ public class ZeebeTestRule extends ExternalResource {
   }
 
   @Override
+  public Statement apply(final Statement base, final Description description) {
+    final Statement statement = recordingExporterTestWatcher.apply(base, description);
+    return super.apply(statement, description);
+  }
+
+  @Override
   protected void after() {
     clientRule.after();
     brokerRule.after();
@@ -76,9 +87,5 @@ public class ZeebeTestRule extends ExternalResource {
             event -> {
               System.out.println("> " + event.toJson());
             });
-  }
-
-  public int getDefaultPartition() {
-    return clientRule.getDefaultPartition();
   }
 }

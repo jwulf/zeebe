@@ -16,6 +16,7 @@
 package io.zeebe.broker.it.workflow.message;
 
 import static io.zeebe.broker.test.EmbeddedBrokerConfigurator.setPartitionCount;
+import static io.zeebe.protocol.Protocol.START_PARTITION_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 
@@ -26,9 +27,11 @@ import io.zeebe.model.bpmn.Bpmn;
 import io.zeebe.model.bpmn.BpmnModelInstance;
 import io.zeebe.protocol.intent.MessageIntent;
 import io.zeebe.protocol.intent.MessageSubscriptionIntent;
-import io.zeebe.protocol.intent.WorkflowInstanceIntent;
 import io.zeebe.test.util.record.RecordingExporter;
+import io.zeebe.test.util.record.WorkflowInstances;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.stream.IntStream;
 import org.junit.Before;
 import org.junit.Rule;
@@ -52,7 +55,7 @@ public class MessageCorrelationMultiplePartitionsTest {
       Bpmn.createExecutableProcess(PROCESS_ID)
           .startEvent()
           .intermediateCatchEvent()
-          .message(m -> m.name("message").zeebeCorrelationKey("$.key"))
+          .message(m -> m.name("message").zeebeCorrelationKey("key"))
           .endEvent("end")
           .done();
 
@@ -86,9 +89,9 @@ public class MessageCorrelationMultiplePartitionsTest {
                 .limit(30))
         .extracting(r -> tuple(r.getMetadata().getPartitionId(), r.getValue().getCorrelationKey()))
         .containsOnly(
-            tuple(0, CORRELATION_KEY_PARTITION_0),
-            tuple(1, CORRELATION_KEY_PARTITION_1),
-            tuple(2, CORRELATION_KEY_PARTITION_2));
+            tuple(START_PARTITION_ID, CORRELATION_KEY_PARTITION_0),
+            tuple(START_PARTITION_ID + 1, CORRELATION_KEY_PARTITION_1),
+            tuple(START_PARTITION_ID + 2, CORRELATION_KEY_PARTITION_2));
   }
 
   @Test
@@ -106,9 +109,9 @@ public class MessageCorrelationMultiplePartitionsTest {
     assertThat(RecordingExporter.messageRecords(MessageIntent.PUBLISHED).limit(30))
         .extracting(r -> tuple(r.getMetadata().getPartitionId(), r.getValue().getCorrelationKey()))
         .containsOnly(
-            tuple(0, CORRELATION_KEY_PARTITION_0),
-            tuple(1, CORRELATION_KEY_PARTITION_1),
-            tuple(2, CORRELATION_KEY_PARTITION_2));
+            tuple(START_PARTITION_ID, CORRELATION_KEY_PARTITION_0),
+            tuple(START_PARTITION_ID + 1, CORRELATION_KEY_PARTITION_1),
+            tuple(START_PARTITION_ID + 2, CORRELATION_KEY_PARTITION_2));
   }
 
   @Test
@@ -119,17 +122,21 @@ public class MessageCorrelationMultiplePartitionsTest {
     publishMessage(CORRELATION_KEY_PARTITION_2, Collections.singletonMap("p", "p2"));
 
     // when
-    createWorkflowInstance(Collections.singletonMap("key", CORRELATION_KEY_PARTITION_0));
-    createWorkflowInstance(Collections.singletonMap("key", CORRELATION_KEY_PARTITION_1));
-    createWorkflowInstance(Collections.singletonMap("key", CORRELATION_KEY_PARTITION_2));
+    final long wfiKey1 =
+        createWorkflowInstance(Collections.singletonMap("key", CORRELATION_KEY_PARTITION_0));
+    final long wfiKey2 =
+        createWorkflowInstance(Collections.singletonMap("key", CORRELATION_KEY_PARTITION_1));
+    final long wfiKey3 =
+        createWorkflowInstance(Collections.singletonMap("key", CORRELATION_KEY_PARTITION_2));
 
     // then
-    assertThat(
-            RecordingExporter.workflowInstanceRecords(WorkflowInstanceIntent.EVENT_ACTIVATED)
-                .withElementId("end")
-                .limit(3))
-        .extracting(r -> r.getValue().getPayloadAsMap().get("p"))
-        .contains("p0", "p1", "p2");
+    final List<String> correlatedValues =
+        Arrays.asList(
+            WorkflowInstances.getCurrentVariables(wfiKey1).get("p"),
+            WorkflowInstances.getCurrentVariables(wfiKey2).get("p"),
+            WorkflowInstances.getCurrentVariables(wfiKey3).get("p"));
+
+    assertThat(correlatedValues).contains("\"p0\"", "\"p1\"", "\"p2\"");
   }
 
   @Test
@@ -151,6 +158,7 @@ public class MessageCorrelationMultiplePartitionsTest {
 
     // when
     brokerRule.stopBroker();
+    RecordingExporter.reset();
     brokerRule.startBroker();
 
     IntStream.range(0, 5)
@@ -167,29 +175,30 @@ public class MessageCorrelationMultiplePartitionsTest {
                 .limit(30))
         .extracting(r -> tuple(r.getMetadata().getPartitionId(), r.getValue().getCorrelationKey()))
         .containsOnly(
-            tuple(0, CORRELATION_KEY_PARTITION_0),
-            tuple(1, CORRELATION_KEY_PARTITION_1),
-            tuple(2, CORRELATION_KEY_PARTITION_2));
+            tuple(START_PARTITION_ID, CORRELATION_KEY_PARTITION_0),
+            tuple(START_PARTITION_ID + 1, CORRELATION_KEY_PARTITION_1),
+            tuple(START_PARTITION_ID + 2, CORRELATION_KEY_PARTITION_2));
   }
 
-  private void createWorkflowInstance(Object payload) {
-    clientRule
+  private long createWorkflowInstance(Object variables) {
+    return clientRule
         .getClient()
         .newCreateInstanceCommand()
         .bpmnProcessId(PROCESS_ID)
         .latestVersion()
-        .payload(payload)
+        .variables(variables)
         .send()
-        .join();
+        .join()
+        .getWorkflowInstanceKey();
   }
 
-  private void publishMessage(String correlationKey, Object payload) {
+  private void publishMessage(String correlationKey, Object variables) {
     clientRule
         .getClient()
         .newPublishMessageCommand()
         .messageName("message")
         .correlationKey(correlationKey)
-        .payload(payload)
+        .variables(variables)
         .send()
         .join();
   }

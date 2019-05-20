@@ -15,34 +15,30 @@
  */
 package io.zeebe.protocol.intent;
 
-public enum WorkflowInstanceIntent implements Intent {
-  CREATE((short) 0),
-  CANCEL((short) 1),
+public enum WorkflowInstanceIntent implements WorkflowInstanceRelatedIntent {
+  CANCEL((short) 0, false),
 
-  UPDATE_PAYLOAD((short) 2),
-  PAYLOAD_UPDATED((short) 3),
+  SEQUENCE_FLOW_TAKEN((short) 1),
 
-  SEQUENCE_FLOW_TAKEN((short) 4),
+  ELEMENT_ACTIVATING((short) 2),
+  ELEMENT_ACTIVATED((short) 3),
+  ELEMENT_COMPLETING((short) 4),
+  ELEMENT_COMPLETED((short) 5),
+  ELEMENT_TERMINATING((short) 6),
+  ELEMENT_TERMINATED((short) 7),
 
-  GATEWAY_ACTIVATED((short) 5),
-
-  ELEMENT_READY((short) 6),
-  ELEMENT_ACTIVATED((short) 7),
-  ELEMENT_COMPLETING((short) 8),
-  ELEMENT_COMPLETED((short) 9),
-  ELEMENT_TERMINATING((short) 10),
-  ELEMENT_TERMINATED((short) 11),
-
-  EVENT_ACTIVATING((short) 12),
-  EVENT_ACTIVATED((short) 13),
-  EVENT_TRIGGERING((short) 14),
-  EVENT_TRIGGERED((short) 15),
-  EVENT_OCCURRED((short) 16);
+  EVENT_OCCURRED((short) 8);
 
   private final short value;
+  private final boolean shouldBlacklist;
 
   WorkflowInstanceIntent(short value) {
+    this(value, true);
+  }
+
+  WorkflowInstanceIntent(short value, boolean shouldBlacklist) {
     this.value = value;
+    this.shouldBlacklist = shouldBlacklist;
   }
 
   public short getIntent() {
@@ -52,38 +48,22 @@ public enum WorkflowInstanceIntent implements Intent {
   public static Intent from(short value) {
     switch (value) {
       case 0:
-        return CREATE;
-      case 1:
         return CANCEL;
-      case 2:
-        return UPDATE_PAYLOAD;
-      case 3:
-        return PAYLOAD_UPDATED;
-      case 4:
+      case 1:
         return SEQUENCE_FLOW_TAKEN;
-      case 5:
-        return GATEWAY_ACTIVATED;
-      case 6:
-        return ELEMENT_READY;
-      case 7:
+      case 2:
+        return ELEMENT_ACTIVATING;
+      case 3:
         return ELEMENT_ACTIVATED;
-      case 8:
+      case 4:
         return ELEMENT_COMPLETING;
-      case 9:
+      case 5:
         return ELEMENT_COMPLETED;
-      case 10:
+      case 6:
         return ELEMENT_TERMINATING;
-      case 11:
+      case 7:
         return ELEMENT_TERMINATED;
-      case 12:
-        return EVENT_ACTIVATING;
-      case 13:
-        return EVENT_ACTIVATED;
-      case 14:
-        return EVENT_TRIGGERING;
-      case 15:
-        return EVENT_TRIGGERED;
-      case 16:
+      case 8:
         return EVENT_OCCURRED;
       default:
         return Intent.UNKNOWN;
@@ -93,5 +73,10 @@ public enum WorkflowInstanceIntent implements Intent {
   @Override
   public short value() {
     return value;
+  }
+
+  @Override
+  public boolean shouldBlacklistInstanceOnError() {
+    return shouldBlacklist;
   }
 }

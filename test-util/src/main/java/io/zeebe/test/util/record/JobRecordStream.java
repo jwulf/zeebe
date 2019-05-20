@@ -15,15 +15,15 @@
  */
 package io.zeebe.test.util.record;
 
-import io.zeebe.exporter.record.Record;
-import io.zeebe.exporter.record.value.JobRecordValue;
-import io.zeebe.exporter.record.value.job.Headers;
+import io.zeebe.exporter.api.record.Record;
+import io.zeebe.exporter.api.record.value.JobRecordValue;
+import io.zeebe.exporter.api.record.value.job.Headers;
 import java.time.Instant;
 import java.util.Map;
 import java.util.stream.Stream;
 
 public class JobRecordStream
-    extends ExporterRecordWithPayloadStream<JobRecordValue, JobRecordStream> {
+    extends ExporterRecordWithVariablesStream<JobRecordValue, JobRecordStream> {
 
   public JobRecordStream(final Stream<Record<JobRecordValue>> wrappedStream) {
     super(wrappedStream);
@@ -64,5 +64,9 @@ public class JobRecordStream
 
   public JobRecordStream withDeadline(final long deadline) {
     return valueFilter(v -> Instant.ofEpochMilli(deadline).equals(v.getDeadline()));
+  }
+
+  public JobRecordStream withWorkflowInstanceKey(long workflowInstanceKey) {
+    return valueFilter(v -> v.getHeaders().getWorkflowInstanceKey() == workflowInstanceKey);
   }
 }

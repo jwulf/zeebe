@@ -24,7 +24,6 @@ import static io.zeebe.logstreams.impl.LogEntryDescriptor.setKey;
 import static io.zeebe.logstreams.impl.LogEntryDescriptor.setMetadataLength;
 import static io.zeebe.logstreams.impl.LogEntryDescriptor.setPosition;
 import static io.zeebe.logstreams.impl.LogEntryDescriptor.setProducerId;
-import static io.zeebe.logstreams.impl.LogEntryDescriptor.setRaftTerm;
 import static io.zeebe.logstreams.impl.LogEntryDescriptor.setSourceEventPosition;
 import static io.zeebe.logstreams.impl.LogEntryDescriptor.setTimestamp;
 import static io.zeebe.logstreams.impl.LogEntryDescriptor.valueOffset;
@@ -48,7 +47,6 @@ import org.agrona.MutableDirectBuffer;
 public class LogStreamBatchWriterImpl implements LogStreamBatchWriter, LogEntryBuilder {
   private static final int INITIAL_BUFFER_CAPACITY = 1024 * 32;
 
-  private static final long POSITION_AS_KEY = -23L;
   private final ClaimedFragmentBatch claimedBatch = new ClaimedFragmentBatch();
 
   private final MutableDirectBuffer eventBuffer =
@@ -61,11 +59,9 @@ public class LogStreamBatchWriterImpl implements LogStreamBatchWriter, LogEntryB
   private int eventLength;
   private int eventCount;
 
-  private LogStream logStream;
   private Dispatcher logWriteBuffer;
   private int logId;
 
-  private boolean positionAsKey;
   private long key;
 
   private int producerId;
@@ -81,7 +77,6 @@ public class LogStreamBatchWriterImpl implements LogStreamBatchWriter, LogEntryB
 
   @Override
   public void wrap(final LogStream logStream) {
-    this.logStream = logStream;
     this.logWriteBuffer = logStream.getWriteBuffer();
     this.logId = logStream.getPartitionId();
 
@@ -110,12 +105,6 @@ public class LogStreamBatchWriterImpl implements LogStreamBatchWriter, LogEntryB
   @Override
   public LogEntryBuilder keyNull() {
     return key(LogEntryDescriptor.KEY_NULL_VALUE);
-  }
-
-  @Override
-  public LogEntryBuilder positionAsKey() {
-    positionAsKey = true;
-    return this;
   }
 
   @Override
@@ -176,8 +165,7 @@ public class LogStreamBatchWriterImpl implements LogStreamBatchWriter, LogEntryB
     final int metadataLength = metadataWriter.getLength();
     final int valueLength = valueWriter.getLength();
 
-    eventBuffer.putLong(
-        eventBufferOffset, positionAsKey ? POSITION_AS_KEY : key, Protocol.ENDIANNESS);
+    eventBuffer.putLong(eventBufferOffset, key, Protocol.ENDIANNESS);
     eventBufferOffset += SIZE_OF_LONG;
 
     eventBuffer.putInt(eventBufferOffset, metadataLength, Protocol.ENDIANNESS);
@@ -257,14 +245,12 @@ public class LogStreamBatchWriterImpl implements LogStreamBatchWriter, LogEntryB
       final int bufferOffset = claimedBatch.getFragmentOffset();
 
       final long position = nextFragmentPosition - alignedFramedLength(fragmentLength);
-      final long keyToWrite = key == POSITION_AS_KEY ? position : key;
 
       // write log entry header
       setPosition(writeBuffer, bufferOffset, position);
-      setRaftTerm(writeBuffer, bufferOffset, logStream.getTerm());
       setProducerId(writeBuffer, bufferOffset, producerId);
       setSourceEventPosition(writeBuffer, bufferOffset, sourceEventPosition);
-      setKey(writeBuffer, bufferOffset, keyToWrite);
+      setKey(writeBuffer, bufferOffset, key);
       setTimestamp(writeBuffer, bufferOffset, ActorClock.currentTimeMillis());
       setMetadataLength(writeBuffer, bufferOffset, (short) metadataLength);
 
@@ -295,7 +281,6 @@ public class LogStreamBatchWriterImpl implements LogStreamBatchWriter, LogEntryB
   }
 
   private void resetEvent() {
-    positionAsKey = false;
     key = LogEntryDescriptor.KEY_NULL_VALUE;
 
     metadataWriter = metadataWriterInstance;

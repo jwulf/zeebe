@@ -15,13 +15,16 @@
  */
 package io.zeebe.broker.it.clustering;
 
+import static io.zeebe.broker.it.util.StatusCodeMatcher.hasStatusCode;
+import static io.zeebe.broker.it.util.StatusDescriptionMatcher.descriptionContains;
 import static io.zeebe.broker.it.util.ZeebeAssertHelper.assertWorkflowInstanceCreated;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.grpc.Status.Code;
 import io.zeebe.broker.it.GrpcClientRule;
 import io.zeebe.client.ZeebeClient;
 import io.zeebe.client.api.events.DeploymentEvent;
-import io.zeebe.client.cmd.ClientException;
+import io.zeebe.client.cmd.ClientStatusException;
 import io.zeebe.model.bpmn.Bpmn;
 import io.zeebe.model.bpmn.BpmnModelInstance;
 import org.junit.Before;
@@ -38,7 +41,7 @@ public class DeploymentClusteredTest {
   private static final BpmnModelInstance WORKFLOW =
       Bpmn.createExecutableProcess("process").startEvent().endEvent().done();
 
-  public Timeout testTimeout = Timeout.seconds(60);
+  public Timeout testTimeout = Timeout.seconds(120);
   public ClusteringRule clusteringRule = new ClusteringRule();
   public GrpcClientRule clientRule = new GrpcClientRule(clusteringRule);
 
@@ -93,7 +96,6 @@ public class DeploymentClusteredTest {
   }
 
   @Test
-  @Ignore("https://github.com/zeebe-io/zeebe/issues/844")
   public void shouldDeployOnRemainingBrokers() {
     // given
 
@@ -123,9 +125,7 @@ public class DeploymentClusteredTest {
     clusteringRule.restartBroker(2);
 
     // then create wf instance on each partition
-    clusteringRule
-        .getPartitionIds()
-        .stream()
+    clusteringRule.getPartitionIds().stream()
         .forEach(
             partitionId -> {
               final long instanceKey =
@@ -135,7 +135,6 @@ public class DeploymentClusteredTest {
   }
 
   @Test
-  @Ignore("https://github.com/zeebe-io/zeebe/issues/844")
   public void shouldDeployAfterRestartBroker() {
     // given
 
@@ -151,12 +150,12 @@ public class DeploymentClusteredTest {
   }
 
   @Test
-  public void shouldNotDeployUnparsable() {
+  public void shouldNotDeployUnparseable() {
     // expect
-    expectedException.expect(ClientException.class);
-    expectedException.expectMessage("Command (CREATE) was rejected");
-    expectedException.expectMessage("Failed to deploy resource 'invalid.bpmn'");
-    expectedException.expectMessage("SAXException while parsing input stream");
+    expectedException.expect(ClientStatusException.class);
+    expectedException.expect(hasStatusCode(Code.INVALID_ARGUMENT));
+    expectedException.expect(
+        descriptionContains("'invalid.bpmn': SAXException while parsing input stream"));
 
     // when
     client.newDeployCommand().addResourceStringUtf8("invalid", "invalid.bpmn").send().join();

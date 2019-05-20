@@ -47,7 +47,9 @@ public class ColumnFamilyTest {
 
     key = new DbLong();
     value = new DbLong();
-    columnFamily = zeebeDb.createColumnFamily(DefaultColumnFamily.DEFAULT, key, value);
+    columnFamily =
+        zeebeDb.createColumnFamily(
+            DefaultColumnFamily.DEFAULT, zeebeDb.createContext(), key, value);
   }
 
   @Test
@@ -323,6 +325,17 @@ public class ColumnFamilyTest {
     // then
     assertThat(keys).containsExactly(6734L, (long) Short.MAX_VALUE);
     assertThat(values).containsExactly(921L, 1L);
+  }
+
+  @Test
+  public void shouldCheckIfEmpty() {
+    assertThat(columnFamily.isEmpty()).isTrue();
+
+    putKeyValuePair(1, 10);
+    assertThat(columnFamily.isEmpty()).isFalse();
+
+    columnFamily.delete(key);
+    assertThat(columnFamily.isEmpty()).isTrue();
   }
 
   private void putKeyValuePair(int key, int value) {

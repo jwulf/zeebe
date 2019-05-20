@@ -25,11 +25,14 @@ import static io.zeebe.logstreams.impl.LogEntryDescriptor.headerLength;
 
 import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.protocol.Protocol;
+import io.zeebe.protocol.clientapi.VarDataEncodingEncoder;
 import io.zeebe.util.buffer.BufferReader;
 import org.agrona.DirectBuffer;
+import org.agrona.MutableDirectBuffer;
 
 /** Represents the implementation of the logged event. */
 public class LoggedEventImpl implements ReadableFragment, LoggedEvent {
+
   protected int fragmentOffset = -1;
   protected int messageOffset = -1;
   protected DirectBuffer buffer;
@@ -84,11 +87,6 @@ public class LoggedEventImpl implements ReadableFragment, LoggedEvent {
   }
 
   @Override
-  public int getRaftTerm() {
-    return LogEntryDescriptor.getRaftTerm(buffer, messageOffset);
-  }
-
-  @Override
   public long getKey() {
     return LogEntryDescriptor.getKey(buffer, messageOffset);
   }
@@ -106,6 +104,12 @@ public class LoggedEventImpl implements ReadableFragment, LoggedEvent {
   @Override
   public short getMetadataLength() {
     return LogEntryDescriptor.getMetadataLength(buffer, messageOffset);
+  }
+
+  @Override
+  public int getMaxValueLength() {
+    return VarDataEncodingEncoder.lengthMaxValue()
+        - LogEntryDescriptor.headerLength(getMetadataLength());
   }
 
   @Override
@@ -170,5 +174,15 @@ public class LoggedEventImpl implements ReadableFragment, LoggedEvent {
         + ", producerId="
         + getProducerId()
         + "]";
+  }
+
+  @Override
+  public int getLength() {
+    return getFragmentLength();
+  }
+
+  @Override
+  public void write(MutableDirectBuffer destination, int offset) {
+    destination.putBytes(offset, buffer, fragmentOffset, getLength());
   }
 }

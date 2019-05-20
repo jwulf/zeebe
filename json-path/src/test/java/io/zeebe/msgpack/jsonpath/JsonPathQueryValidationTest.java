@@ -30,10 +30,11 @@ public class JsonPathQueryValidationTest {
   public static Iterable<Object[]> data() {
     return Arrays.asList(
         new Object[][] {
-          {"$..", 1, "Unexpected json-path token RECURSION_OPERATOR"}, // currently not supported
-          {"foo", 0, "Unexpected json-path token LITERAL"},
-          {"$.foo.$", 6, "Unexpected json-path token ROOT_OBJECT"},
-          {"$.[foo", 2, "Unexpected json-path token SUBSCRIPT_OPERATOR_BEGIN"}
+          {"$", 0, "Unexpected json-path token ROOT_OBJECT"},
+          {"$.foo", 0, "Unexpected json-path token ROOT_OBJECT"},
+          {"foo.$", 4, "Unexpected json-path token ROOT_OBJECT"},
+          {"foo.*", 4, "Unexpected json-path token WILDCARD"},
+          {"foo[0]", 3, "Unexpected json-path token SUBSCRIPT_OPERATOR_BEGIN"}
         });
   }
 

@@ -15,7 +15,7 @@
  */
 package io.zeebe.test.exporter.record;
 
-import io.zeebe.exporter.record.Record;
+import io.zeebe.exporter.api.record.Record;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -28,7 +28,7 @@ public class MockRecord extends ExporterMappedObject implements Record, Cloneabl
   private long key = -1;
   private Instant timestamp = Instant.now();
   private MockRecordMetadata metadata = new MockRecordMetadata();
-  private MockRecordValueWithPayload value = new MockRecordValueWithPayload();
+  private MockRecordValueWithVariables value = new MockRecordValueWithVariables();
 
   public MockRecord() {}
 
@@ -40,7 +40,7 @@ public class MockRecord extends ExporterMappedObject implements Record, Cloneabl
       long key,
       Instant timestamp,
       MockRecordMetadata metadata,
-      MockRecordValueWithPayload value) {
+      MockRecordValueWithVariables value) {
     this.position = position;
     this.raftTerm = raftTerm;
     this.sourceRecordPosition = sourceRecordPosition;
@@ -58,16 +58,6 @@ public class MockRecord extends ExporterMappedObject implements Record, Cloneabl
 
   public MockRecord setPosition(long position) {
     this.position = position;
-    return this;
-  }
-
-  @Override
-  public int getRaftTerm() {
-    return raftTerm;
-  }
-
-  public MockRecord setRaftTerm(int raftTerm) {
-    this.raftTerm = raftTerm;
     return this;
   }
 
@@ -122,11 +112,11 @@ public class MockRecord extends ExporterMappedObject implements Record, Cloneabl
   }
 
   @Override
-  public MockRecordValueWithPayload getValue() {
+  public MockRecordValueWithVariables getValue() {
     return value;
   }
 
-  public MockRecord setValue(MockRecordValueWithPayload value) {
+  public MockRecord setValue(MockRecordValueWithVariables value) {
     this.value = value;
     return this;
   }
@@ -164,7 +154,6 @@ public class MockRecord extends ExporterMappedObject implements Record, Cloneabl
 
     final MockRecord record = (MockRecord) o;
     return getPosition() == record.getPosition()
-        && getRaftTerm() == record.getRaftTerm()
         && getSourceRecordPosition() == record.getSourceRecordPosition()
         && getProducerId() == record.getProducerId()
         && getKey() == record.getKey()
@@ -177,7 +166,6 @@ public class MockRecord extends ExporterMappedObject implements Record, Cloneabl
   public int hashCode() {
     return Objects.hash(
         getPosition(),
-        getRaftTerm(),
         getSourceRecordPosition(),
         getProducerId(),
         getKey(),

@@ -42,7 +42,7 @@ public class ActivateJobsHandler {
     activateJobs(
         RequestMapper.toActivateJobsRequest(request),
         partitionIdIteratorForType(request.getType(), partitionsCount),
-        request.getAmount(),
+        request.getMaxJobsToActivate(),
         request.getType(),
         responseObserver);
   }
@@ -53,10 +53,26 @@ public class ActivateJobsHandler {
       int remainingAmount,
       String jobType,
       StreamObserver<ActivateJobsResponse> responseObserver) {
-    if (remainingAmount > 0 && partitionIdIterator.hasNext()) {
+    activateJobs(request, partitionIdIterator, remainingAmount, jobType, responseObserver, false);
+  }
+
+  private void activateJobs(
+      BrokerActivateJobsRequest request,
+      PartitionIdIterator partitionIdIterator,
+      int remainingAmount,
+      String jobType,
+      StreamObserver<ActivateJobsResponse> responseObserver,
+      boolean pollPrevPartition) {
+
+    if (remainingAmount > 0 && (pollPrevPartition || partitionIdIterator.hasNext())) {
+      final int partitionId =
+          pollPrevPartition
+              ? partitionIdIterator.getCurrentPartitionId()
+              : partitionIdIterator.next();
+
       // partitions to check and jobs to activate left
-      request.setPartitionId(partitionIdIterator.next());
-      request.setAmount(remainingAmount);
+      request.setPartitionId(partitionId);
+      request.setMaxJobsToActivate(remainingAmount);
       brokerClient.sendRequest(
           request,
           (key, response) -> {
@@ -66,12 +82,14 @@ public class ActivateJobsHandler {
             if (jobsCount > 0) {
               responseObserver.onNext(grpcResponse);
             }
+
             activateJobs(
                 request,
                 partitionIdIterator,
                 remainingAmount - jobsCount,
                 jobType,
-                responseObserver);
+                responseObserver,
+                response.getTruncated());
           },
           error -> {
             Loggers.GATEWAY_LOGGER.warn(
@@ -83,7 +101,7 @@ public class ActivateJobsHandler {
           });
     } else {
       // enough jobs activated or no more partitions left to check
-      jobTypeToNextPartitionId.put(jobType, partitionIdIterator.getCurrentPartitionId() + 1);
+      jobTypeToNextPartitionId.put(jobType, partitionIdIterator.getCurrentPartitionId());
       responseObserver.onCompleted();
     }
   }

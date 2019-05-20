@@ -21,6 +21,9 @@
             "bpmnProcessId": {
               "type": "keyword"
             },
+            "workflowKey": {
+              "type": "long"
+            },
             "workflowInstanceKey": {
               "type": "long"
             },
@@ -33,7 +36,10 @@
             "jobKey": {
               "type": "long"
             },
-            "payload": {
+            "variableScopeKey": {
+              "type": "long"
+            },
+            "variables": {
               "type": "text"
             }
           }

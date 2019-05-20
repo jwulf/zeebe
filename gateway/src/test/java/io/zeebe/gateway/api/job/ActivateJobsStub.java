@@ -20,6 +20,7 @@ import io.zeebe.gateway.api.util.StubbedGateway.RequestStub;
 import io.zeebe.gateway.impl.broker.request.BrokerActivateJobsRequest;
 import io.zeebe.gateway.impl.broker.response.BrokerResponse;
 import io.zeebe.gateway.impl.data.MsgPackConverter;
+import io.zeebe.protocol.Protocol;
 import io.zeebe.protocol.impl.record.value.job.JobBatchRecord;
 import java.util.stream.LongStream;
 import org.agrona.DirectBuffer;
@@ -42,12 +43,12 @@ public class ActivateJobsStub
   public static final long ELEMENT_INSTANCE_KEY = 459L;
 
   public static final String CUSTOM_HEADERS = "{\"foo\": 12, \"bar\": \"val\"}";
-  public static final String PAYLOAD = "{\"foo\": 13, \"bar\": \"world\"}";
+  public static final String VARIABLES = "{\"foo\": 13, \"bar\": \"world\"}";
 
   public static final DirectBuffer CUSTOM_HEADERS_MSGPACK =
       new UnsafeBuffer(MSG_PACK_CONVERTER.convertToMsgPack(CUSTOM_HEADERS));
-  public static final DirectBuffer PAYLOAD_MSGPACK =
-      new UnsafeBuffer(MSG_PACK_CONVERTER.convertToMsgPack(PAYLOAD));
+  public static final DirectBuffer VARIABLES_MSGPACK =
+      new UnsafeBuffer(MSG_PACK_CONVERTER.convertToMsgPack(VARIABLES));
 
   public long getJobBatchKey() {
     return JOB_BATCH_KEY;
@@ -65,8 +66,8 @@ public class ActivateJobsStub
     return CUSTOM_HEADERS;
   }
 
-  public String getPayload() {
-    return PAYLOAD;
+  public String getVariables() {
+    return VARIABLES;
   }
 
   public long getWorkflowInstanceKey() {
@@ -95,24 +96,36 @@ public class ActivateJobsStub
 
   @Override
   public BrokerResponse<JobBatchRecord> handle(BrokerActivateJobsRequest request) throws Exception {
+    final int partitionId = request.getPartitionId();
+
     final JobBatchRecord requestDto = request.getRequestWriter();
 
     final JobBatchRecord response = new JobBatchRecord();
-    response.setAmount(requestDto.getAmount());
+    response.setMaxJobsToActivate(requestDto.getMaxJobsToActivate());
     response.setWorker(requestDto.getWorker());
     response.setType(requestDto.getType());
     response.setTimeout(requestDto.getTimeout());
-    addJobs(response, requestDto.getAmount(), requestDto.getType(), requestDto.getWorker());
+    addJobs(
+        response,
+        partitionId,
+        requestDto.getMaxJobsToActivate(),
+        requestDto.getType(),
+        requestDto.getWorker());
 
-    return new BrokerResponse<>(response, 0, JOB_BATCH_KEY);
+    return new BrokerResponse<>(
+        response, partitionId, Protocol.encodePartitionId(partitionId, JOB_BATCH_KEY));
   }
 
   private void addJobs(
-      JobBatchRecord response, int amount, DirectBuffer type, DirectBuffer worker) {
+      JobBatchRecord response,
+      int partitionId,
+      int amount,
+      DirectBuffer type,
+      DirectBuffer worker) {
     LongStream.range(0, amount)
         .forEach(
             key -> {
-              response.jobKeys().add().setValue(key);
+              response.jobKeys().add().setValue(Protocol.encodePartitionId(partitionId, key));
               response
                   .jobs()
                   .add()
@@ -121,7 +134,7 @@ public class ActivateJobsStub
                   .setRetries(RETRIES)
                   .setDeadline(DEADLINE)
                   .setCustomHeaders(CUSTOM_HEADERS_MSGPACK)
-                  .setPayload(PAYLOAD_MSGPACK)
+                  .setVariables(VARIABLES_MSGPACK)
                   .getHeaders()
                   .setWorkflowInstanceKey(WORKFLOW_INSTANCE_KEY)
                   .setBpmnProcessId(BPMN_PROCESS_ID)

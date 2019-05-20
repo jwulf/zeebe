@@ -22,7 +22,7 @@ import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import io.zeebe.broker.exporter.ExporterObjectMapper;
-import io.zeebe.exporter.record.RecordMetadata;
+import io.zeebe.exporter.api.record.RecordMetadata;
 import io.zeebe.protocol.clientapi.RecordType;
 import io.zeebe.protocol.clientapi.RejectionType;
 import io.zeebe.protocol.clientapi.ValueType;
@@ -32,12 +32,12 @@ import io.zeebe.protocol.intent.Intent;
 @JsonInclude(Include.NON_NULL)
 public class RecordMetadataImpl implements RecordMetadata {
   private final ExporterObjectMapper objectMapper;
-  private final int partitionId;
+  private final ValueType valueType;
   private final Intent intent;
   private final RecordType recordType;
+  private final int partitionId;
   private final RejectionType rejectionType;
   private final String rejectionReason;
-  private final ValueType valueType;
 
   public RecordMetadataImpl(
       ExporterObjectMapper objectMapper,

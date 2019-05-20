@@ -17,8 +17,8 @@
  */
 package io.zeebe.broker.util;
 
-import io.zeebe.broker.logstreams.processor.TypedEventImpl;
-import io.zeebe.broker.logstreams.processor.TypedRecord;
+import io.zeebe.engine.processor.TypedEventImpl;
+import io.zeebe.engine.processor.TypedRecord;
 import io.zeebe.logstreams.log.LoggedEvent;
 import io.zeebe.msgpack.UnpackedObject;
 import io.zeebe.protocol.impl.record.RecordMetadata;
@@ -30,13 +30,14 @@ public class CopiedTypedEvent extends TypedEventImpl {
   private final long sourcePosition;
   private final RecordMetadata metadata;
 
-  CopiedTypedEvent(LoggedEvent event, UnpackedObject object) {
+  public CopiedTypedEvent(LoggedEvent event, UnpackedObject object) {
     this.value = object;
     this.key = event.getKey();
     this.position = event.getPosition();
     this.sourcePosition = event.getSourceEventPosition();
     this.metadata = new RecordMetadata();
     event.readMetadata(metadata);
+    value.wrap(event.getValueBuffer(), event.getValueOffset(), event.getValueLength());
   }
 
   @Override
@@ -62,7 +63,6 @@ public class CopiedTypedEvent extends TypedEventImpl {
   public static <T extends UnpackedObject> TypedRecord<T> toTypedEvent(
       LoggedEvent event, Class<T> valueClass) {
     final T value = ReflectUtil.newInstance(valueClass);
-    value.wrap(event.getValueBuffer(), event.getValueOffset(), event.getValueLength());
     return new CopiedTypedEvent(event, value);
   }
 }

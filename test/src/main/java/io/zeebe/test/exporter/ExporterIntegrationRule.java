@@ -25,9 +25,9 @@ import io.zeebe.broker.system.configuration.ExporterCfg;
 import io.zeebe.client.ClientProperties;
 import io.zeebe.client.api.subscription.JobHandler;
 import io.zeebe.client.api.subscription.JobWorker;
-import io.zeebe.exporter.record.Record;
-import io.zeebe.exporter.record.value.IncidentRecordValue;
-import io.zeebe.exporter.spi.Exporter;
+import io.zeebe.exporter.api.record.Record;
+import io.zeebe.exporter.api.record.value.IncidentRecordValue;
+import io.zeebe.exporter.api.spi.Exporter;
 import io.zeebe.model.bpmn.Bpmn;
 import io.zeebe.model.bpmn.BpmnModelInstance;
 import io.zeebe.protocol.intent.IncidentIntent;
@@ -125,7 +125,7 @@ public class ExporterIntegrationRule extends ExternalResource {
       Bpmn.createExecutableProcess("testProcess")
           .startEvent()
           .intermediateCatchEvent(
-              "message", e -> e.message(m -> m.name("catch").zeebeCorrelationKey("$.orderId")))
+              "message", e -> e.message(m -> m.name("catch").zeebeCorrelationKey("orderId")))
           .serviceTask("task", t -> t.zeebeTaskType("work").zeebeTaskHeader("foo", "bar"))
           .endEvent()
           .done();
@@ -159,9 +159,7 @@ public class ExporterIntegrationRule extends ExternalResource {
 
   /** @return the currently configured exporters */
   public List<ExporterCfg> getConfiguredExporters() {
-    return getBrokerConfig()
-        .getExporters()
-        .stream()
+    return getBrokerConfig().getExporters().stream()
         .filter(cfg -> !cfg.getId().equals(TEST_RECORD_EXPORTER_ID))
         .collect(Collectors.toList());
   }
@@ -180,8 +178,7 @@ public class ExporterIntegrationRule extends ExternalResource {
    * @return instantiated configuration class based on the exporter args map
    */
   public <T> T getExporterConfiguration(String id, Class<T> configurationClass) {
-    return getConfiguredExporters()
-        .stream()
+    return getConfiguredExporters().stream()
         .filter(cfg -> cfg.getId().equals(id))
         .findFirst()
         .map(cfg -> convertMapToConfig(cfg.getArgs(), configurationClass))
@@ -282,7 +279,10 @@ public class ExporterIntegrationRule extends ExternalResource {
 
     // wait for incident and resolve it
     final Record<IncidentRecordValue> incident =
-        RecordingExporter.incidentRecords(IncidentIntent.CREATED).getFirst();
+        RecordingExporter.incidentRecords(IncidentIntent.CREATED)
+            .withWorkflowInstanceKey(workflowInstanceKey)
+            .withElementId("task")
+            .getFirst();
     clientRule
         .getClient()
         .newUpdateRetriesCommand(incident.getValue().getJobKey())
@@ -317,19 +317,19 @@ public class ExporterIntegrationRule extends ExternalResource {
   }
 
   /**
-   * Creates a workflow instance for the given process ID, with the given payload.
+   * Creates a workflow instance for the given process ID, with the given variables.
    *
    * @param processId BPMN process ID
-   * @param payload initial payload for the instance
+   * @param variables initial variables for the instance
    * @return unique ID used to interact with the instance
    */
-  public long createWorkflowInstance(String processId, Map<String, Object> payload) {
+  public long createWorkflowInstance(String processId, Map<String, Object> variables) {
     return clientRule
         .getClient()
         .newCreateInstanceCommand()
         .bpmnProcessId(processId)
         .latestVersion()
-        .payload(payload)
+        .variables(variables)
         .send()
         .join()
         .getWorkflowInstanceKey();

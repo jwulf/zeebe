@@ -15,18 +15,20 @@
  */
 package io.zeebe.broker.it.job;
 
+import static io.zeebe.broker.it.util.StatusCodeMatcher.hasStatusCode;
+import static io.zeebe.broker.it.util.StatusDescriptionMatcher.descriptionContains;
 import static io.zeebe.test.util.TestUtil.waitUntil;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.assertj.core.api.Assertions.entry;
 
+import io.grpc.Status.Code;
 import io.zeebe.broker.it.GrpcClientRule;
 import io.zeebe.broker.it.util.RecordingJobHandler;
 import io.zeebe.broker.it.util.ZeebeAssertHelper;
 import io.zeebe.broker.test.EmbeddedBrokerRule;
 import io.zeebe.client.api.clients.JobClient;
 import io.zeebe.client.api.response.ActivatedJob;
-import io.zeebe.client.cmd.ClientException;
+import io.zeebe.client.cmd.ClientStatusException;
 import java.util.Collections;
 import org.junit.Before;
 import org.junit.Rule;
@@ -62,7 +64,7 @@ public class CompleteJobTest {
   }
 
   @Test
-  public void shouldCompleteJobWithoutPayload() {
+  public void shouldCompleteJobWithoutVariables() {
     // when
     clientRule.getClient().newCompleteCommand(jobKey).send().join();
 
@@ -70,59 +72,59 @@ public class CompleteJobTest {
     ZeebeAssertHelper.assertJobCompleted(
         "test",
         (job) -> {
-          assertThat(job.getPayload()).isEqualTo("{}");
-          assertThat(job.getPayloadAsMap()).isEmpty();
+          assertThat(job.getVariables()).isEqualTo("{}");
+          assertThat(job.getVariablesAsMap()).isEmpty();
         });
   }
 
   @Test
-  public void shouldCompleteJobNullPayload() {
+  public void shouldCompleteJobNullVariables() {
     // when
-    clientRule.getClient().newCompleteCommand(jobKey).payload("null").send().join();
+    clientRule.getClient().newCompleteCommand(jobKey).variables("null").send().join();
 
     // then
     ZeebeAssertHelper.assertJobCompleted(
         "test",
         (job) -> {
-          assertThat(job.getPayload()).isEqualTo("{}");
-          assertThat(job.getPayloadAsMap()).isEmpty();
+          assertThat(job.getVariables()).isEqualTo("{}");
+          assertThat(job.getVariablesAsMap()).isEmpty();
         });
   }
 
   @Test
-  public void shouldCompleteJobWithPayload() {
+  public void shouldCompleteJobWithVariables() {
     // when
-    clientRule.getClient().newCompleteCommand(jobKey).payload("{\"foo\":\"bar\"}").send().join();
+    clientRule.getClient().newCompleteCommand(jobKey).variables("{\"foo\":\"bar\"}").send().join();
 
     // then
     ZeebeAssertHelper.assertJobCompleted(
         "test",
         (job) -> {
-          assertThat(job.getPayload()).isEqualTo("{\"foo\":\"bar\"}");
-          assertThat(job.getPayloadAsMap()).containsOnly(entry("foo", "bar"));
+          assertThat(job.getVariables()).isEqualTo("{\"foo\":\"bar\"}");
+          assertThat(job.getVariablesAsMap()).containsOnly(entry("foo", "bar"));
         });
   }
 
   @Test
-  public void shouldThrowExceptionOnCompleteJobWithInvalidPayload() {
-    // when
-    final Throwable throwable =
-        catchThrowable(
-            () -> clientRule.getClient().newCompleteCommand(jobKey).payload("[]").send().join());
+  public void shouldThrowExceptionOnCompleteJobWithInvalidVariables() {
+    // expect
+    thrown.expect(ClientStatusException.class);
+    thrown.expect(hasStatusCode(Code.INVALID_ARGUMENT));
+    thrown.expect(
+        descriptionContains(
+            "Property 'variables' is invalid: Expected document to be a root level object, but was 'ARRAY'"));
 
-    // then
-    assertThat(throwable).isInstanceOf(ClientException.class);
-    assertThat(throwable.getMessage())
-        .contains("Document has invalid format. On root level an object is only allowed.");
+    // when
+    clientRule.getClient().newCompleteCommand(jobKey).variables("[]").send().join();
   }
 
   @Test
-  public void shouldCompleteJobWithPayloadAsMap() {
+  public void shouldCompleteJobWithVariablesAsMap() {
     // when
     clientRule
         .getClient()
         .newCompleteCommand(jobKey)
-        .payload(Collections.singletonMap("foo", "bar"))
+        .variables(Collections.singletonMap("foo", "bar"))
         .send()
         .join();
 
@@ -130,25 +132,25 @@ public class CompleteJobTest {
     ZeebeAssertHelper.assertJobCompleted(
         "test",
         (job) -> {
-          assertThat(job.getPayload()).isEqualTo("{\"foo\":\"bar\"}");
-          assertThat(job.getPayloadAsMap()).containsOnly(entry("foo", "bar"));
+          assertThat(job.getVariables()).isEqualTo("{\"foo\":\"bar\"}");
+          assertThat(job.getVariablesAsMap()).containsOnly(entry("foo", "bar"));
         });
   }
 
   @Test
-  public void shouldCompleteJobWithPayloadAsObject() {
-    final PayloadObject payload = new PayloadObject();
-    payload.foo = "bar";
+  public void shouldCompleteJobWithVariablesAsObject() {
+    final VariablesObject variables = new VariablesObject();
+    variables.foo = "bar";
 
     // when
-    clientRule.getClient().newCompleteCommand(jobKey).payload(payload).send().join();
+    clientRule.getClient().newCompleteCommand(jobKey).variables(variables).send().join();
 
     // then
     ZeebeAssertHelper.assertJobCompleted(
         "test",
         (job) -> {
-          assertThat(job.getPayload()).isEqualTo("{\"foo\":\"bar\"}");
-          assertThat(job.getPayloadAsMap()).containsOnly(entry("foo", "bar"));
+          assertThat(job.getVariables()).isEqualTo("{\"foo\":\"bar\"}");
+          assertThat(job.getVariablesAsMap()).containsOnly(entry("foo", "bar"));
         });
   }
 
@@ -159,19 +161,15 @@ public class CompleteJobTest {
     final long jobKey = clientRule.createSingleJob("bar");
     jobClient.newCompleteCommand(jobKey).send().join();
 
-    // then
-    thrown.expect(ClientException.class);
-    thrown.expectMessage(
-        "Command (COMPLETE) for event with key "
-            + jobKey
-            + " was rejected. It is not applicable in the current state. "
-            + "Job does not exist");
+    // expect
+    thrown.expect(ClientStatusException.class);
+    thrown.expect(hasStatusCode(Code.NOT_FOUND));
 
     // when
     jobClient.newCompleteCommand(jobKey).send().join();
   }
 
-  public static class PayloadObject {
+  public static class VariablesObject {
     public String foo;
   }
 }

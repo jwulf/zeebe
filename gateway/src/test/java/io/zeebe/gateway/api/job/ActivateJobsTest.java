@@ -23,6 +23,7 @@ import io.zeebe.gateway.impl.broker.request.BrokerActivateJobsRequest;
 import io.zeebe.gateway.protocol.GatewayOuterClass.ActivateJobsRequest;
 import io.zeebe.gateway.protocol.GatewayOuterClass.ActivateJobsResponse;
 import io.zeebe.gateway.protocol.GatewayOuterClass.ActivatedJob;
+import io.zeebe.protocol.Protocol;
 import io.zeebe.protocol.impl.record.value.job.JobBatchRecord;
 import io.zeebe.test.util.JsonUtil;
 import io.zeebe.util.buffer.BufferUtil;
@@ -42,7 +43,7 @@ public class ActivateJobsTest extends GatewayTest {
 
     final String jobType = "testJob";
     final String worker = "testWorker";
-    final int amount = 13;
+    final int maxJobsToActivate = 13;
     final Duration timeout = Duration.ofMinutes(12);
     final List<String> fetchVariables = Arrays.asList("foo", "bar", "baz");
 
@@ -50,7 +51,7 @@ public class ActivateJobsTest extends GatewayTest {
         ActivateJobsRequest.newBuilder()
             .setType(jobType)
             .setWorker(worker)
-            .setAmount(amount)
+            .setMaxJobsToActivate(maxJobsToActivate)
             .setTimeout(timeout.toMillis())
             .addAllFetchVariable(fetchVariables)
             .build();
@@ -63,11 +64,12 @@ public class ActivateJobsTest extends GatewayTest {
 
     final ActivateJobsResponse response = responses.next();
 
-    assertThat(response.getJobsCount()).isEqualTo(amount);
+    assertThat(response.getJobsCount()).isEqualTo(maxJobsToActivate);
 
-    for (int i = 0; i < amount; i++) {
+    for (int i = 0; i < maxJobsToActivate; i++) {
       final ActivatedJob job = response.getJobs(i);
-      assertThat(job.getKey()).isEqualTo(i);
+      assertThat(job.getKey())
+          .isEqualTo(Protocol.encodePartitionId(Protocol.START_PARTITION_ID, i));
       assertThat(job.getType()).isEqualTo(jobType);
       assertThat(job.getWorker()).isEqualTo(worker);
       assertThat(job.getRetries()).isEqualTo(stub.getRetries());
@@ -82,17 +84,41 @@ public class ActivateJobsTest extends GatewayTest {
       assertThat(job.getJobHeaders().getElementInstanceKey())
           .isEqualTo(stub.getElementInstanceKey());
       JsonUtil.assertEquality(job.getCustomHeaders(), stub.getCustomHeaders());
-      JsonUtil.assertEquality(job.getPayload(), stub.getPayload());
+      JsonUtil.assertEquality(job.getVariables(), stub.getVariables());
     }
 
     final BrokerActivateJobsRequest brokerRequest = gateway.getSingleBrokerRequest();
     final JobBatchRecord brokerRequestValue = brokerRequest.getRequestWriter();
-    assertThat(brokerRequestValue.getAmount()).isEqualTo(amount);
+    assertThat(brokerRequestValue.getMaxJobsToActivate()).isEqualTo(maxJobsToActivate);
     assertThat(brokerRequestValue.getType()).isEqualTo(wrapString(jobType));
     assertThat(brokerRequestValue.getTimeout()).isEqualTo(timeout.toMillis());
     assertThat(brokerRequestValue.getWorker()).isEqualTo(wrapString(worker));
     assertThat(brokerRequestValue.variables())
         .extracting(v -> BufferUtil.bufferAsString(v.getValue()))
         .containsExactlyInAnyOrderElementsOf(fetchVariables);
+  }
+
+  @Test
+  public void shouldActivateJobsRoundRobin() {
+    // given
+    final ActivateJobsStub stub = new ActivateJobsStub();
+    stub.registerWith(gateway);
+
+    final ActivateJobsRequest request =
+        ActivateJobsRequest.newBuilder().setType("test").setMaxJobsToActivate(2).build();
+
+    for (int partitionOffset = 0; partitionOffset < 3; partitionOffset++) {
+      // when
+      final Iterator<ActivateJobsResponse> responses = client.activateJobs(request);
+
+      // then
+      assertThat(responses.hasNext()).isTrue();
+      final ActivateJobsResponse response = responses.next();
+
+      for (ActivatedJob activatedJob : response.getJobsList()) {
+        assertThat(Protocol.decodePartitionId(activatedJob.getKey()))
+            .isEqualTo(Protocol.START_PARTITION_ID + partitionOffset);
+      }
+    }
   }
 }

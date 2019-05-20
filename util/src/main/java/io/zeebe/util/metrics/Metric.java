@@ -27,17 +27,20 @@ import org.agrona.concurrent.UnsafeBuffer;
 import org.agrona.concurrent.status.AtomicCounter;
 
 public class Metric {
-  public static final byte[] OPENING_CURLY_BRACE = "{".getBytes(StandardCharsets.UTF_8);
-  public static final byte[] CLOSING_CURLY_BRACE = "}".getBytes(StandardCharsets.UTF_8);
-  public static final byte[] NEW_LINE = "\n".getBytes(StandardCharsets.UTF_8);
-  public static final byte[] DOUBLE_QUOTE = "\"".getBytes(StandardCharsets.UTF_8);
-  public static final byte[] COMMA = ",".getBytes(StandardCharsets.UTF_8);
-  public static final byte[] EQUALS = "=".getBytes(StandardCharsets.UTF_8);
-  public static final byte[] WHITESPACE = " ".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] EMPTY = new byte[0];
+  private static final byte[] DESCRIPTION_PREFIX = "# HELP".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] TYPE_PREFIX = "# TYPE".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] OPENING_CURLY_BRACE = "{".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] CLOSING_CURLY_BRACE = "}".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] NEW_LINE = "\n".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] DOUBLE_QUOTE = "\"".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] COMMA = ",".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] EQUALS = "=".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] WHITESPACE = " ".getBytes(StandardCharsets.UTF_8);
 
   private static class Label {
-    private byte[] name;
-    private byte[] value;
+    private final byte[] name;
+    private final byte[] value;
 
     Label(String name, String value) {
       this.name = name.getBytes(StandardCharsets.UTF_8);
@@ -69,7 +72,7 @@ public class Metric {
     this.value = new AtomicCounter(new UnsafeBuffer(new byte[BitUtil.SIZE_OF_LONG]), 0);
     this.name = name.getBytes(StandardCharsets.UTF_8);
     this.type = type.getBytes(StandardCharsets.UTF_8);
-    this.description = description.getBytes(StandardCharsets.UTF_8);
+    this.description = description == null ? EMPTY : description.getBytes(StandardCharsets.UTF_8);
     this.labels = new Label[labels.size()];
 
     final List<Entry<String, String>> labelSet = new ArrayList<>(labels.entrySet());
@@ -108,6 +111,22 @@ public class Metric {
   }
 
   public int dump(MutableDirectBuffer buffer, int offset, long now) {
+    if (description.length > 0) {
+      offset = writeArray(buffer, offset, DESCRIPTION_PREFIX);
+      offset = writeArray(buffer, offset, WHITESPACE);
+      offset = writeArray(buffer, offset, name);
+      offset = writeArray(buffer, offset, WHITESPACE);
+      offset = writeArray(buffer, offset, description);
+      offset = writeArray(buffer, offset, NEW_LINE);
+    }
+
+    offset = writeArray(buffer, offset, TYPE_PREFIX);
+    offset = writeArray(buffer, offset, WHITESPACE);
+    offset = writeArray(buffer, offset, name);
+    offset = writeArray(buffer, offset, WHITESPACE);
+    offset = writeArray(buffer, offset, type);
+    offset = writeArray(buffer, offset, NEW_LINE);
+
     offset = writeArray(buffer, offset, name);
     offset = writeArray(buffer, offset, OPENING_CURLY_BRACE);
     for (int i = 0; i < labels.length; i++) {

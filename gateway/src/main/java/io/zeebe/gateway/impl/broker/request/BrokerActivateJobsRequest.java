@@ -43,15 +43,14 @@ public class BrokerActivateJobsRequest extends BrokerExecuteCommand<JobBatchReco
     return this;
   }
 
-  public BrokerActivateJobsRequest setAmount(int amount) {
-    requestDto.setAmount(amount);
+  public BrokerActivateJobsRequest setMaxJobsToActivate(int maxJobsToActivate) {
+    requestDto.setMaxJobsToActivate(maxJobsToActivate);
     return this;
   }
 
   public BrokerActivateJobsRequest setVariables(List<String> fetchVariables) {
     final ValueArray<StringValue> variables = requestDto.variables();
-    fetchVariables
-        .stream()
+    fetchVariables.stream()
         .map(BufferUtil::wrapString)
         .forEach(buffer -> variables.add().wrap(buffer));
 

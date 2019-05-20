@@ -4,11 +4,9 @@ portOffset = 3
 [network.client]
 port = 1
 
-[network.management]
-port = 2
+[network.atomix]
+port = 5
 
-[network.replication]
-port = 3
+[metrics]
+port = 6
 
-[network.subscription]
-port = 4

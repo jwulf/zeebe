@@ -17,16 +17,12 @@
  */
 package io.zeebe.broker.transport.clientapi;
 
+import io.zeebe.broker.Loggers;
 import io.zeebe.broker.clustering.base.partitions.Partition;
-import io.zeebe.broker.transport.controlmessage.ControlMessageRequestHeaderDescriptor;
-import io.zeebe.dispatcher.ClaimedFragment;
-import io.zeebe.dispatcher.Dispatcher;
 import io.zeebe.logstreams.log.LogStreamRecordWriter;
 import io.zeebe.logstreams.log.LogStreamWriterImpl;
 import io.zeebe.msgpack.UnpackedObject;
 import io.zeebe.protocol.Protocol;
-import io.zeebe.protocol.clientapi.ControlMessageRequestDecoder;
-import io.zeebe.protocol.clientapi.ErrorCode;
 import io.zeebe.protocol.clientapi.ExecuteCommandRequestDecoder;
 import io.zeebe.protocol.clientapi.MessageHeaderDecoder;
 import io.zeebe.protocol.clientapi.RecordType;
@@ -37,6 +33,8 @@ import io.zeebe.protocol.impl.record.value.incident.IncidentRecord;
 import io.zeebe.protocol.impl.record.value.job.JobBatchRecord;
 import io.zeebe.protocol.impl.record.value.job.JobRecord;
 import io.zeebe.protocol.impl.record.value.message.MessageRecord;
+import io.zeebe.protocol.impl.record.value.variable.VariableDocumentRecord;
+import io.zeebe.protocol.impl.record.value.workflowinstance.WorkflowInstanceCreationRecord;
 import io.zeebe.protocol.impl.record.value.workflowinstance.WorkflowInstanceRecord;
 import io.zeebe.protocol.intent.Intent;
 import io.zeebe.transport.RemoteAddress;
@@ -46,34 +44,29 @@ import io.zeebe.transport.ServerRequestHandler;
 import java.util.EnumMap;
 import java.util.function.Consumer;
 import org.agrona.DirectBuffer;
-import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Int2ObjectHashMap;
 import org.agrona.concurrent.ManyToOneConcurrentLinkedQueue;
+import org.slf4j.Logger;
 
 public class ClientApiMessageHandler implements ServerMessageHandler, ServerRequestHandler {
+  private static final Logger LOG = Loggers.TRANSPORT_LOGGER;
+
   protected final MessageHeaderDecoder messageHeaderDecoder = new MessageHeaderDecoder();
   protected final ExecuteCommandRequestDecoder executeCommandRequestDecoder =
       new ExecuteCommandRequestDecoder();
-  protected final ControlMessageRequestHeaderDescriptor controlMessageRequestHeaderDescriptor =
-      new ControlMessageRequestHeaderDescriptor();
-
   protected final ManyToOneConcurrentLinkedQueue<Runnable> cmdQueue =
       new ManyToOneConcurrentLinkedQueue<>();
-  protected final Consumer<Runnable> cmdConsumer = (c) -> c.run();
+  protected final Consumer<Runnable> cmdConsumer = Runnable::run;
 
   protected final Int2ObjectHashMap<Partition> leaderPartitions = new Int2ObjectHashMap<>();
   protected final RecordMetadata eventMetadata = new RecordMetadata();
   protected final LogStreamRecordWriter logStreamWriter = new LogStreamWriterImpl();
 
   protected final ErrorResponseWriter errorResponseWriter = new ErrorResponseWriter();
-  protected final Dispatcher controlMessageDispatcher;
-  protected final ClaimedFragment claimedControlMessageFragment = new ClaimedFragment();
 
   protected final EnumMap<ValueType, UnpackedObject> recordsByType = new EnumMap<>(ValueType.class);
 
-  public ClientApiMessageHandler(final Dispatcher controlMessageDispatcher) {
-    this.controlMessageDispatcher = controlMessageDispatcher;
-
+  public ClientApiMessageHandler() {
     initEventTypeMap();
   }
 
@@ -84,6 +77,8 @@ public class ClientApiMessageHandler implements ServerMessageHandler, ServerRequ
     recordsByType.put(ValueType.MESSAGE, new MessageRecord());
     recordsByType.put(ValueType.JOB_BATCH, new JobBatchRecord());
     recordsByType.put(ValueType.INCIDENT, new IncidentRecord());
+    recordsByType.put(ValueType.VARIABLE_DOCUMENT, new VariableDocumentRecord());
+    recordsByType.put(ValueType.WORKFLOW_INSTANCE_CREATION, new WorkflowInstanceCreationRecord());
   }
 
   private boolean handleExecuteCommandRequest(
@@ -107,8 +102,7 @@ public class ClientApiMessageHandler implements ServerMessageHandler, ServerRequ
 
     if (partition == null) {
       return errorResponseWriter
-          .errorCode(ErrorCode.PARTITION_NOT_FOUND)
-          .errorMessage("Cannot execute command. Partition with id '%d' not found", partitionId)
+          .partitionLeaderMismatch(partitionId)
           .tryWriteResponseOrLogFailure(output, requestAddress.getStreamId(), requestId);
     }
 
@@ -118,8 +112,7 @@ public class ClientApiMessageHandler implements ServerMessageHandler, ServerRequ
 
     if (event == null) {
       return errorResponseWriter
-          .errorCode(ErrorCode.MESSAGE_NOT_SUPPORTED)
-          .errorMessage("Cannot execute command. Invalid event type '%s'.", eventType.name())
+          .unsupportedMessage(eventType.name(), recordsByType.keySet().toArray())
           .tryWriteResponseOrLogFailure(output, requestAddress.getStreamId(), requestId);
     }
 
@@ -132,10 +125,11 @@ public class ClientApiMessageHandler implements ServerMessageHandler, ServerRequ
     try {
       // verify that the event / command is valid
       event.wrap(buffer, eventOffset, eventLength);
-    } catch (final Throwable t) {
+    } catch (RuntimeException e) {
+      LOG.error("Failed to deserialize message of type {} in client API", eventType.name(), e);
+
       return errorResponseWriter
-          .errorCode(ErrorCode.INVALID_MESSAGE)
-          .errorMessage("Cannot deserialize command: '%s'.", concatErrorMessages(t))
+          .malformedRequest(e)
           .tryWriteResponseOrLogFailure(output, requestAddress.getStreamId(), requestId);
     }
 
@@ -160,63 +154,12 @@ public class ClientApiMessageHandler implements ServerMessageHandler, ServerRequ
     return eventPosition >= 0;
   }
 
-  private String concatErrorMessages(Throwable t) {
-    final StringBuilder sb = new StringBuilder();
-
-    sb.append(t.getMessage());
-
-    while (t.getCause() != null) {
-      t = t.getCause();
-
-      sb.append("; ");
-      sb.append(t.getMessage());
-    }
-
-    return sb.toString();
-  }
-
-  private boolean handleControlMessageRequest(
-      final RecordMetadata eventMetadata,
-      final DirectBuffer buffer,
-      final int messageOffset,
-      final int messageLength) {
-    boolean isHandled = false;
-    long publishPosition;
-
-    do {
-      publishPosition =
-          controlMessageDispatcher.claim(
-              claimedControlMessageFragment,
-              ControlMessageRequestHeaderDescriptor.framedLength(messageLength));
-    } while (publishPosition == -2);
-
-    if (publishPosition >= 0) {
-      final MutableDirectBuffer writeBuffer = claimedControlMessageFragment.getBuffer();
-      int writeBufferOffset = claimedControlMessageFragment.getOffset();
-
-      controlMessageRequestHeaderDescriptor
-          .wrap(writeBuffer, writeBufferOffset)
-          .streamId(eventMetadata.getRequestStreamId())
-          .requestId(eventMetadata.getRequestId());
-
-      writeBufferOffset += ControlMessageRequestHeaderDescriptor.headerLength();
-
-      writeBuffer.putBytes(writeBufferOffset, buffer, messageOffset, messageLength);
-
-      claimedControlMessageFragment.commit();
-
-      isHandled = true;
-    }
-
-    return isHandled;
-  }
-
   public void addPartition(final Partition partition) {
-    cmdQueue.add(() -> leaderPartitions.put(partition.getInfo().getPartitionId(), partition));
+    cmdQueue.add(() -> leaderPartitions.put(partition.getPartitionId(), partition));
   }
 
   public void removePartition(final Partition partition) {
-    cmdQueue.add(() -> leaderPartitions.remove(partition.getInfo().getPartitionId()));
+    cmdQueue.add(() -> leaderPartitions.remove(partition.getPartitionId()));
   }
 
   @Override
@@ -236,10 +179,7 @@ public class ClientApiMessageHandler implements ServerMessageHandler, ServerRequ
 
     if (clientVersion > Protocol.PROTOCOL_VERSION) {
       return errorResponseWriter
-          .errorCode(ErrorCode.INVALID_CLIENT_VERSION)
-          .errorMessage(
-              "Client has newer version than broker (%d > %d)",
-              clientVersion, Protocol.PROTOCOL_VERSION)
+          .invalidClientVersion(Protocol.PROTOCOL_VERSION, clientVersion)
           .tryWriteResponse(output, remoteAddress.getStreamId(), requestId);
     }
 
@@ -248,29 +188,14 @@ public class ClientApiMessageHandler implements ServerMessageHandler, ServerRequ
     eventMetadata.requestId(requestId);
     eventMetadata.requestStreamId(remoteAddress.getStreamId());
 
-    final boolean isHandled;
-    switch (templateId) {
-      case ExecuteCommandRequestDecoder.TEMPLATE_ID:
-        isHandled =
-            handleExecuteCommandRequest(
-                output, remoteAddress, requestId, eventMetadata, buffer, offset, length);
-        break;
-
-      case ControlMessageRequestDecoder.TEMPLATE_ID:
-        isHandled = handleControlMessageRequest(eventMetadata, buffer, offset, length);
-        break;
-
-      default:
-        isHandled =
-            errorResponseWriter
-                .errorCode(ErrorCode.MESSAGE_NOT_SUPPORTED)
-                .errorMessage(
-                    "Cannot handle message. Template id '%d' is not supported.", templateId)
-                .tryWriteResponse(output, remoteAddress.getStreamId(), requestId);
-        break;
+    if (templateId == ExecuteCommandRequestDecoder.TEMPLATE_ID) {
+      return handleExecuteCommandRequest(
+          output, remoteAddress, requestId, eventMetadata, buffer, offset, length);
     }
 
-    return isHandled;
+    return errorResponseWriter
+        .invalidMessageTemplate(templateId, ExecuteCommandRequestDecoder.TEMPLATE_ID)
+        .tryWriteResponse(output, remoteAddress.getStreamId(), requestId);
   }
 
   @Override

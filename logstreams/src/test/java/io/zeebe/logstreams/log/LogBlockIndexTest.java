@@ -17,157 +17,150 @@ package io.zeebe.logstreams.log;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.zeebe.db.ZeebeDbFactory;
+import io.zeebe.db.impl.rocksdb.ZeebeRocksDbFactory;
+import io.zeebe.logstreams.impl.log.index.LogBlockColumnFamilies;
 import io.zeebe.logstreams.impl.log.index.LogBlockIndex;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.nio.ByteBuffer;
-import org.agrona.concurrent.UnsafeBuffer;
+import io.zeebe.logstreams.impl.log.index.LogBlockIndexContext;
+import io.zeebe.logstreams.state.StateSnapshotController;
+import io.zeebe.logstreams.state.StateStorage;
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import org.junit.rules.TemporaryFolder;
 
 public class LogBlockIndexTest {
-  private static final int CAPACITY = 111;
+
+  public static final int ADDRESS_MULTIPLIER = 200;
+  public static final int ENTRY_OFFSET = 5;
 
   private LogBlockIndex blockIndex;
+  private LogBlockIndexContext indexContext;
 
   @Rule public ExpectedException exception = ExpectedException.none();
+  @Rule public TemporaryFolder runtimeDirectory = new TemporaryFolder();
+  @Rule public TemporaryFolder snapshotDirectory = new TemporaryFolder();
 
   @Before
-  public void setup() {
-    blockIndex = createNewBlockIndex(CAPACITY);
+  public void setup() throws Exception {
+    runtimeDirectory.create();
+    snapshotDirectory.create();
+
+    startBlockIndexDb();
   }
 
-  protected LogBlockIndex createNewBlockIndex(int capacity) {
-    return new LogBlockIndex(
-        capacity,
-        c -> {
-          return new UnsafeBuffer(ByteBuffer.allocate(c));
-        });
+  private void startBlockIndexDb() {
+    final ZeebeDbFactory<LogBlockColumnFamilies> dbFactory =
+        ZeebeRocksDbFactory.newFactory(LogBlockColumnFamilies.class);
+    final StateStorage stateStorage =
+        new StateStorage(runtimeDirectory.getRoot(), snapshotDirectory.getRoot());
+    final StateSnapshotController controller = new StateSnapshotController(dbFactory, stateStorage);
+
+    blockIndex = new LogBlockIndex(controller);
+    indexContext = blockIndex.createLogBlockIndexContext();
   }
 
-  @Test
-  public void shouldAddBlock() {
-    final int capacity = blockIndex.capacity();
+  @After
+  public void tearDown() {
+    runtimeDirectory.delete();
+    snapshotDirectory.delete();
 
-    // when
-
-    for (int i = 0; i < capacity; i++) {
-      final int pos = i + 1;
-      final int addr = pos * 10;
-      final int expectedSize = i + 1;
-
-      assertThat(blockIndex.addBlock(pos, addr)).isEqualTo(expectedSize);
-      assertThat(blockIndex.size()).isEqualTo(expectedSize);
-    }
-
-    // then
-
-    for (int i = 0; i < capacity; i++) {
-      final int virtPos = i + 1;
-      final int physPos = virtPos * 10;
-
-      assertThat(blockIndex.getLogPosition(i)).isEqualTo(virtPos);
-      assertThat(blockIndex.getAddress(i)).isEqualTo(physPos);
+    try {
+      blockIndex.closeDb();
+    } catch (final Exception e) {
+      e.printStackTrace();
     }
   }
 
   @Test
-  public void shouldNotAddBlockIfCapacityReached() {
-    // given
-    final int capacity = blockIndex.capacity();
-
-    while (capacity > blockIndex.size()) {
-      blockIndex.addBlock(blockIndex.size(), 0);
-    }
-
-    // then
-    exception.expect(RuntimeException.class);
-    exception.expectMessage(
-        String.format(
-            "LogBlockIndex capacity of %d entries reached. Cannot add new block.", capacity));
+  public void shouldAddBlocks() {
+    final int numBlocks = 10;
 
     // when
-    blockIndex.addBlock(blockIndex.size(), 0);
+    final long lastPosition = addBlocks(numBlocks);
+
+    // then
+    lookupAndAssert(numBlocks);
+    assertThat(blockIndex.isEmpty(indexContext)).isFalse();
+    assertThat(blockIndex.getLastPosition()).isEqualTo(lastPosition);
   }
 
   @Test
   public void shouldNotAddBlockWithEqualPos() {
     // given
-    blockIndex.addBlock(10, 0);
+    blockIndex.addBlock(indexContext, 10, 0);
 
     // then
     exception.expect(IllegalArgumentException.class);
     exception.expectMessage("Illegal value for position");
 
     // when
-    blockIndex.addBlock(10, 0);
+    blockIndex.addBlock(indexContext, 10, 0);
   }
 
   @Test
   public void shouldNotAddBlockWithSmallerPos() {
     // given
-    blockIndex.addBlock(10, 0);
+    blockIndex.addBlock(indexContext, 10, 0);
 
     // then
     exception.expect(IllegalArgumentException.class);
     exception.expectMessage("Illegal value for position");
 
     // when
-    blockIndex.addBlock(9, 0);
+    blockIndex.addBlock(indexContext, 9, 0);
   }
 
   @Test
   public void shouldReturnMinusOneForEmptyBlockIndex() {
-    assertThat(blockIndex.lookupBlockAddress(-1)).isEqualTo(-1);
-    assertThat(blockIndex.lookupBlockAddress(1)).isEqualTo(-1);
+    assertThat(blockIndex.lookupBlockAddress(indexContext, -1)).isEqualTo(-1);
+    assertThat(blockIndex.lookupBlockAddress(indexContext, 1)).isEqualTo(-1);
   }
 
   @Test
-  public void shouldNotReturnFirstBlockIndex() {
+  public void shouldNotReturnFirstBlockAddress() {
     // given
-    blockIndex.addBlock(10, 1000);
+    blockIndex.addBlock(indexContext, 10, 1000);
 
     // then
     for (int i = 0; i < 10; i++) {
-      assertThat(blockIndex.lookupBlockAddress(i)).isEqualTo(-1);
+      assertThat(blockIndex.lookupBlockAddress(indexContext, i)).isEqualTo(-1);
     }
   }
 
   @Test
-  public void shouldReturnFirstBlockIndex() {
+  public void shouldReturnFirstBlockAddress() {
     // given
-    blockIndex.addBlock(10, 1000);
+    blockIndex.addBlock(indexContext, 10, 1000);
 
     // then
     for (int i = 10; i < 100; i++) {
-      assertThat(blockIndex.lookupBlockAddress(i)).isEqualTo(1000);
+      assertThat(blockIndex.lookupBlockAddress(indexContext, i)).isEqualTo(1000);
     }
   }
 
   @Test
-  public void shouldLookupBlocks() {
-    final int capacity = blockIndex.capacity();
+  public void shouldLookupBlockAddresses() {
+    final int capacity = 100;
 
     // given
-
     for (int i = 0; i < capacity; i++) {
       final int pos = (i + 1) * 10;
       final int addr = (i + 1) * 100;
 
-      blockIndex.addBlock(pos, addr);
+      blockIndex.addBlock(indexContext, pos, addr);
     }
 
     // then
-
     for (int i = 0; i < capacity; i++) {
       final int expectedAddr = (i + 1) * 100;
 
       for (int j = 0; j < 10; j++) {
         final int pos = ((i + 1) * 10) + j;
 
-        assertThat(blockIndex.lookupBlockAddress(pos)).isEqualTo(expectedAddr);
+        assertThat(blockIndex.lookupBlockAddress(indexContext, pos)).isEqualTo(expectedAddr);
       }
     }
   }
@@ -175,80 +168,104 @@ public class LogBlockIndexTest {
   @Test
   public void shouldNotReturnFirstBlockPosition() {
     // given
-    blockIndex.addBlock(10, 1000);
+    blockIndex.addBlock(indexContext, 10, 1000);
 
     // then
     for (int i = 0; i < 10; i++) {
-      assertThat(blockIndex.lookupBlockPosition(i)).isEqualTo(-1);
+      assertThat(blockIndex.lookupBlockPosition(indexContext, i)).isEqualTo(-1);
     }
   }
 
   @Test
   public void shouldReturnFirstBlockPosition() {
     // given
-    blockIndex.addBlock(10, 1000);
+    blockIndex.addBlock(indexContext, 10, 1000);
 
     // then
     for (int i = 10; i < 100; i++) {
-      assertThat(blockIndex.lookupBlockPosition(i)).isEqualTo(10);
+      assertThat(blockIndex.lookupBlockPosition(indexContext, i)).isEqualTo(10);
     }
   }
 
   @Test
   public void shouldLookupBlockPositions() {
-    final int capacity = blockIndex.capacity();
+    final int capacity = 100;
 
     // given
-
     for (int i = 0; i < capacity; i++) {
       final int pos = (i + 1) * 10;
       final int addr = (i + 1) * 100;
 
-      blockIndex.addBlock(pos, addr);
+      blockIndex.addBlock(indexContext, pos, addr);
     }
 
     // then
-
     for (int i = 0; i < capacity; i++) {
       final int expectedPos = (i + 1) * 10;
 
       for (int j = 0; j < 10; j++) {
         final int pos = ((i + 1) * 10) + j;
 
-        assertThat(blockIndex.lookupBlockPosition(pos)).isEqualTo(expectedPos);
+        assertThat(blockIndex.lookupBlockPosition(indexContext, pos)).isEqualTo(expectedPos);
       }
     }
   }
 
   @Test
   public void shouldRecoverIndexFromSnapshot() throws Exception {
-    final int capacity = blockIndex.capacity();
-
-    for (int i = 0; i < capacity; i++) {
-      final int pos = i + 1;
-      final int addr = pos * 10;
-
-      blockIndex.addBlock(pos, addr);
-    }
+    // given
+    final int numBlocks = 10;
+    final long snapshotPosition = addBlocks(numBlocks);
+    blockIndex.writeSnapshot(snapshotPosition, 1);
 
     // when
-    final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-    blockIndex.writeSnapshot(outputStream);
-
-    final LogBlockIndex newBlockIndex = createNewBlockIndex(CAPACITY);
-
-    final ByteArrayInputStream inputStream = new ByteArrayInputStream(outputStream.toByteArray());
-    newBlockIndex.recoverFromSnapshot(inputStream);
+    blockIndex.closeDb(); // close and reopen DB
+    startBlockIndexDb();
 
     // then
-    assertThat(newBlockIndex.size()).isEqualTo(blockIndex.size());
+    lookupAndAssert(numBlocks);
+    assertThat(blockIndex.getLastPosition()).isEqualTo(snapshotPosition);
+  }
 
-    for (int i = 0; i < capacity; i++) {
-      final int virtPos = i + 1;
-      final int physPos = virtPos * 10;
+  @Test
+  public void shouldDeleteEntriesUpToPosition() {
+    // given
+    final int numBlocks = 3;
+    addBlocks(numBlocks);
 
-      assertThat(newBlockIndex.getLogPosition(i)).isEqualTo(virtPos);
-      assertThat(newBlockIndex.getAddress(i)).isEqualTo(physPos);
+    // when
+    blockIndex.deleteUpToPosition(indexContext, ENTRY_OFFSET);
+
+    // then
+    assertThat(blockIndex.lookupBlockAddress(indexContext, 0))
+        .isEqualTo(LogBlockIndex.VALUE_NOT_FOUND);
+    for (int i = 0; i < ENTRY_OFFSET; ++i) {
+      assertThat(blockIndex.lookupBlockPosition(indexContext, i))
+          .isEqualTo(LogBlockIndex.VALUE_NOT_FOUND);
+    }
+    assertThat(blockIndex.lookupBlockAddress(indexContext, ENTRY_OFFSET))
+        .isEqualTo(ENTRY_OFFSET * ADDRESS_MULTIPLIER);
+    // don't delete block if it may contain entries that shouldn't be deleted
+  }
+
+  // Adds blocks and returns the last added position
+  private long addBlocks(int numBlocks) {
+    for (int blockPos = 0; blockPos < numBlocks * ENTRY_OFFSET; blockPos += ENTRY_OFFSET) {
+      final int address = blockPos * ADDRESS_MULTIPLIER;
+      blockIndex.addBlock(indexContext, blockPos, address);
+    }
+
+    return (numBlocks - 1) * ENTRY_OFFSET;
+  }
+
+  private void lookupAndAssert(int numBlocks) {
+    for (int blockPos = 0; blockPos < numBlocks * ENTRY_OFFSET; blockPos += ENTRY_OFFSET) {
+      final int address = blockPos * ADDRESS_MULTIPLIER;
+
+      for (int entryPos = blockPos; entryPos < blockPos + ENTRY_OFFSET; entryPos++) {
+        assertThat(blockIndex.lookupBlockPosition(indexContext, entryPos)).isEqualTo(blockPos);
+        assertThat(blockIndex.lookupBlockAddress(indexContext, entryPos)).isEqualTo(address);
+      }
     }
   }
 }

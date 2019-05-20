@@ -15,13 +15,12 @@
  */
 package io.zeebe.logstreams.impl.service;
 
+import static io.zeebe.logstreams.impl.service.LogStreamServiceNames.distributedLogPartitionServiceName;
 import static io.zeebe.logstreams.impl.service.LogStreamServiceNames.logStorageAppenderRootService;
 import static io.zeebe.logstreams.impl.service.LogStreamServiceNames.logStorageAppenderServiceName;
 import static io.zeebe.logstreams.impl.service.LogStreamServiceNames.logStreamRootServiceName;
 import static io.zeebe.logstreams.impl.service.LogStreamServiceNames.logWriteBufferServiceName;
 import static io.zeebe.logstreams.impl.service.LogStreamServiceNames.logWriteBufferSubscriptionServiceName;
-import static io.zeebe.logstreams.log.LogStreamUtil.INVALID_ADDRESS;
-import static io.zeebe.logstreams.log.LogStreamUtil.getAddressForPosition;
 
 import io.zeebe.dispatcher.Dispatcher;
 import io.zeebe.dispatcher.DispatcherBuilder;
@@ -30,7 +29,9 @@ import io.zeebe.dispatcher.Subscription;
 import io.zeebe.logstreams.impl.LogBlockIndexWriter;
 import io.zeebe.logstreams.impl.LogStorageAppender;
 import io.zeebe.logstreams.impl.LogStreamBuilder;
+import io.zeebe.logstreams.impl.Loggers;
 import io.zeebe.logstreams.impl.log.index.LogBlockIndex;
+import io.zeebe.logstreams.impl.log.index.LogBlockIndexContext;
 import io.zeebe.logstreams.log.LogStream;
 import io.zeebe.logstreams.spi.LogStorage;
 import io.zeebe.servicecontainer.CompositeServiceBuilder;
@@ -44,9 +45,14 @@ import io.zeebe.util.ByteValue;
 import io.zeebe.util.sched.ActorCondition;
 import io.zeebe.util.sched.channel.ActorConditions;
 import io.zeebe.util.sched.future.ActorFuture;
+import java.util.function.Supplier;
 import org.agrona.concurrent.status.Position;
+import org.slf4j.Logger;
 
 public class LogStreamService implements LogStream, Service<LogStream> {
+  public static final long INVALID_ADDRESS = -1L;
+
+  private static final Logger LOG = Loggers.LOGSTREAMS_LOGGER;
   private static final String APPENDER_SUBSCRIPTION_NAME = "appender";
 
   private final Injector<LogStorage> logStorageInjector = new Injector<>();
@@ -55,7 +61,6 @@ public class LogStreamService implements LogStream, Service<LogStream> {
 
   private final ServiceContainer serviceContainer;
 
-  private final ActorConditions onLogStorageAppendedConditions = new ActorConditions();
   private final ActorConditions onCommitPositionUpdatedConditions;
 
   private final String logName;
@@ -65,7 +70,9 @@ public class LogStreamService implements LogStream, Service<LogStream> {
   private final int maxAppendBlockSize;
 
   private final Position commitPosition;
-  private volatile int term = 0;
+
+  private Supplier<Long> exporterPositionSupplier;
+  private LogBlockIndexContext logBlockIndexContext;
 
   private ServiceStartContext serviceContext;
 
@@ -95,6 +102,7 @@ public class LogStreamService implements LogStream, Service<LogStream> {
     serviceContext = startContext;
     logStorage = logStorageInjector.getValue();
     logBlockIndex = logBlockIndexInjector.getValue();
+    logBlockIndexContext = logBlockIndex.createLogBlockIndexContext();
     logBlockIndexWriter = logBockIndexWriterInjector.getValue();
   }
 
@@ -133,15 +141,15 @@ public class LogStreamService implements LogStream, Service<LogStream> {
         .install();
 
     final LogStorageAppenderService appenderService =
-        new LogStorageAppenderService(onLogStorageAppendedConditions, maxAppendBlockSize);
+        new LogStorageAppenderService(maxAppendBlockSize);
     appenderFuture =
         installOperation
             .createService(logStorageAppenderServiceName, appenderService)
             .dependency(
                 appenderSubscriptionServiceName, appenderService.getAppenderSubscriptionInjector())
             .dependency(
-                logStorageInjector.getInjectedServiceName(),
-                appenderService.getLogStorageInjector())
+                distributedLogPartitionServiceName(logName),
+                appenderService.getDistributedLogstreamInjector())
             .install();
 
     return installOperation.installAndReturn(logStorageAppenderServiceName);
@@ -224,17 +232,29 @@ public class LogStreamService implements LogStream, Service<LogStream> {
   }
 
   @Override
-  public void truncate(final long position) {
-    if (position <= getCommitPosition()) {
-      throw new IllegalArgumentException("Can't truncate position which is already committed");
+  public void delete(long position) {
+    // supplier may have been removed due to service being stopped
+    if (exporterPositionSupplier == null) {
+      return;
     }
 
-    final long truncateAddress = getAddressForPosition(this, position);
-    if (truncateAddress != INVALID_ADDRESS) {
-      logStorage.truncate(truncateAddress);
+    final long lowestExportedPosition = exporterPositionSupplier.get();
+    position = Math.min(position, lowestExportedPosition);
+
+    final long blockAddress = logBlockIndex.lookupBlockAddress(logBlockIndexContext, position);
+
+    if (blockAddress != LogBlockIndex.VALUE_NOT_FOUND) {
+      LOG.info(
+          "Delete data from logstream until position '{}' (address: '{}').",
+          position,
+          blockAddress);
+
+      logBlockIndex.deleteUpToPosition(logBlockIndexContext, position);
+      logStorage.delete(blockAddress);
     } else {
-      throw new IllegalArgumentException(
-          String.format("Truncation failed! Position %d was not found.", position));
+      LOG.debug(
+          "Tried to delete from log stream, but found no corresponding address in the log block index for the given position {}.",
+          position);
     }
   }
 
@@ -256,23 +276,8 @@ public class LogStreamService implements LogStream, Service<LogStream> {
   }
 
   @Override
-  public void registerOnAppendCondition(final ActorCondition condition) {
-    onLogStorageAppendedConditions.registerConsumer(condition);
-  }
-
-  @Override
-  public void removeOnAppendCondition(final ActorCondition condition) {
-    onLogStorageAppendedConditions.removeConsumer(condition);
-  }
-
-  @Override
-  public int getTerm() {
-    return term;
-  }
-
-  @Override
-  public void setTerm(final int term) {
-    this.term = term;
+  public void setExporterPositionSupplier(final Supplier<Long> supplier) {
+    exporterPositionSupplier = supplier;
   }
 
   public Injector<LogBlockIndex> getLogBlockIndexInjector() {

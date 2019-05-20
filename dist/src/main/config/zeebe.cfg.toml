@@ -56,7 +56,7 @@
 
 # Sets size of the transport buffer to send and received messages between gateway and broker cluster.
 # This setting can also be overridden using the environment variable ZEEBE_GATEWAY_TRANSPORT_BUFFER.
-# transportBuffer = "2M"
+# transportBuffer = "128M"
 
 # Sets the timeout of requests send to the broker cluster
 # This setting can also be overridden using the environment variable ZEEBE_GATEWAY_REQUEST_TIMEOUT.
@@ -70,12 +70,9 @@
 [network]
 
 # This section contains the network configuration. Particularly, it allows to
-# configure the hosts and ports the broker should bind to. the broker exposes 3
+# configure the hosts and ports the broker should bind to. the broker exposes 2
 # ports: 1. client: the port on which client (Java, CLI, Go, ...) connections
-# are handled 2. management: used internally by the cluster for the gossip
-# membership protocol and other management interactions 3. replication: used
-# internally by the cluster for replicating data across nodes using the raft
-# protocol
+# are handled 2. atomix: used for internal cluster communication.
 
 # Controls the default host the broker should bind to. Can be overwritten on a
 # per binding basis for client, management and replication
@@ -114,46 +111,13 @@
 # (such as management of subscriptions)
 # controlMessageBufferSize = "8M"
 
-[network.management]
+[network.atomix]
 
-# Overrides the host the management api binds to
+# Overrides the host used by atomix for cluster communication
 # host = "localhost"
 #
-# Sets the port the management api binds to
-# port = 26502
-#
-# Overrides the size of the buffer to be used for buffering outgoing messages to
-# other brokers through the management protocols
-# sendBufferSize = "16M"
-#
-# Sets the buffer size used for receiving gossip messages and others
-# receiveBufferSize = "8M"
-
-[network.replication]
-
-# Overrides the host the replication api binds to
-# host = "localhost"
-#
-# Sets the port the replication api binds to
-# port = 26503
-#
-# Sets the buffer size used for buffering outgoing raft (replication) messages
-# sendBufferSize = "16M"
-
-[network.subscription]
-
-# Overrides the host the subscription api binds to
-# host = "localhost"
-#
-# Sets the port the subscription api binds to
-# port = 26504
-#
-# Overrides the size of the buffer to be used for buffering outgoing messages to
-# other brokers through the subscription protocols
-# sendBufferSize = "16M"
-#
-# Sets the buffer size used for receiving subscription messages and others
-# receiveBufferSize = "8M"
+# Sets the port used by atomix for cluster communication
+# port = 26505
 
 
 [data]
@@ -161,13 +125,18 @@
 # This section allows to configure Zeebe's data storage. Data is stored in
 # "partition folders". A partition folder has the following structure:
 #
-# internal-system-0                 (root partition folder)
+# partition-0                       (root partition folder)
 # ├── partition.json                (metadata about the partition)
 # ├── segments                      (the actual data as segment files)
 # │   ├── 00.data
 # │   └── 01.data
-# └── snapshots                     (snapshot data)
-#
+# ├── index                      	(log block index state and snapshots)
+# │   ├── runtime
+# │   └── snapshots
+# └── state                     	(stream processor state and snapshots)
+#     └── stream-processor
+#		  ├── runtime
+#		  └── snapshots
 
 # Specify a list of directories in which data is stored. Using multiple
 # directories makes sense in case the machine which is running Zeebe has
@@ -179,11 +148,18 @@
 # directories = [ "data" ]
 
 # The default size of data segments.
-# defaultSegmentSize = "512M"
+# defaultLogSegmentSize = "512M"
+
+# The size of block index segments.
+# indexBlockSize = "4M"
 
 # How often we take snapshots of streams (time unit)
 # snapshotPeriod = "15m"
 
+# The maximum number of snapshots kept (must be a positive integer). When this 
+# limit is passed the oldest snapshot is deleted.
+# maxSnapshots = "1"
+#
 # How often follower partitions will check for new snapshots to replicate from
 # the leader partitions. Snapshot replication enables faster failover by
 # reducing how many log entries must be reprocessed in case of leader change.
@@ -218,16 +194,21 @@
 # clusterSize = 1
 
 # Allows to specify a list of known other nodes to connect to on startup
-# The contact points of the management api must be specified.
+# The contact points of the atomix configuration must be specified.
 # The format is [HOST:PORT]
 # Example:
-# initialContactPoints = [ "192.168.1.22:26502", "192.168.1.32:26502" ]
+# initialContactPoints = [ "192.168.1.22:26505", "192.168.1.32:26505" ]
 #
 # This setting can also be overridden using the environment variable ZEEBE_CONTACT_POINTS
 # specifying a comma-separated list of contact points.
 #
 # Default is empty list:
 # initialContactPoints = []
+
+# Allows to specify a name for the cluster
+# This setting can also be overridden using the environment variable ZEEBE_CLUSTER_NAME
+# Example:
+# clusterName = "zeebe-cluster"
 
 [threads]
 
@@ -256,27 +237,15 @@
 # Controls the interval at which the metrics are written to the metrics file
 # reportingInterval = "5s"
 
-[gossip]
+# Controls if the prometheus metrics should be exporter over HTTP
+# This setting can also be overridden using the environment variable ZEEBE_METRICS_HTTP_SERVER.
+# enableHttpServer = false
 
-# retransmissionMultiplier = 3
-# probeInterval = "1s"
-# probeTimeout = "500ms"
-# probeIndirectNodes = 3
-# probeIndirectTimeout = "1s"
-# suspicionMultiplier = 5
-# syncTimeout = "3s"
-# syncInterval = "15s"
-# joinTimeout = "1s"
-# joinInterval = "5s"
-# leaveTimeout = "1s"
-# maxMembershipEventsPerMessage = 32
-# maxCustomEventsPerMessage = 8
+# Host to export metrics on, defaults to network.host
+# host = "0.0.0.0"
 
-[raft]
-
-# heartbeatInterval = "250ms"
-# electionInterval = "1s"
-# leaveTimeout = "1s"
+# Port to export metrics on
+# port = 9600
 
 # Configure exporters below; note that configuration parsing conventions do not apply to exporter
 # arguments, which will be parsed as normal TOML.
@@ -328,6 +297,10 @@
 #  [exporters.args.bulk]
 #  delay = 5
 #  size = 1_000
+#
+#  [exporters.args.authentication]
+#  username = elastic
+#  password = changeme
 #
 #  [exporters.args.index]
 #  prefix = "zeebe-record"

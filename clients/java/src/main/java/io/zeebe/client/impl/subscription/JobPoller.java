@@ -49,10 +49,11 @@ public class JobPoller implements StreamObserver<ActivateJobsResponse> {
     activatedJobs = 0;
   }
 
-  public void poll(int amount, Consumer<ActivatedJob> jobConsumer, Consumer<Integer> doneCallback) {
+  void poll(
+      int maxJobsToActivate, Consumer<ActivatedJob> jobConsumer, Consumer<Integer> doneCallback) {
     reset();
 
-    requestBuilder.setAmount(amount);
+    requestBuilder.setMaxJobsToActivate(maxJobsToActivate);
     this.jobConsumer = jobConsumer;
     this.doneCallback = doneCallback;
 
@@ -61,8 +62,8 @@ public class JobPoller implements StreamObserver<ActivateJobsResponse> {
 
   private void poll() {
     LOG.trace(
-        "Polling {} jobs for worker {} and job type {}",
-        requestBuilder.getAmount(),
+        "Polling at max {} jobs for worker {} and job type {}",
+        requestBuilder.getMaxJobsToActivate(),
         requestBuilder.getWorker(),
         requestBuilder.getType());
     gatewayStub.activateJobs(requestBuilder.build(), this);
@@ -71,9 +72,7 @@ public class JobPoller implements StreamObserver<ActivateJobsResponse> {
   @Override
   public void onNext(ActivateJobsResponse activateJobsResponse) {
     activatedJobs += activateJobsResponse.getJobsCount();
-    activateJobsResponse
-        .getJobsList()
-        .stream()
+    activateJobsResponse.getJobsList().stream()
         .map(job -> new ActivatedJobImpl(objectMapper, job))
         .forEach(jobConsumer);
   }

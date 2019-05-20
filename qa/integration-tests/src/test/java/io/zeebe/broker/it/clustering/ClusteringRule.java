@@ -15,48 +15,47 @@
  */
 package io.zeebe.broker.it.clustering;
 
+import static io.zeebe.broker.Broker.LOG;
+import static io.zeebe.broker.clustering.base.ClusterBaseLayerServiceNames.ATOMIX_JOIN_SERVICE;
 import static io.zeebe.broker.test.EmbeddedBrokerConfigurator.DEBUG_EXPORTER;
 import static io.zeebe.broker.test.EmbeddedBrokerConfigurator.DISABLE_EMBEDDED_GATEWAY;
 import static io.zeebe.broker.test.EmbeddedBrokerConfigurator.TEST_RECORDER;
 import static io.zeebe.broker.test.EmbeddedBrokerConfigurator.setCluster;
 import static io.zeebe.broker.test.EmbeddedBrokerConfigurator.setInitialContactPoints;
 import static io.zeebe.broker.test.EmbeddedBrokerRule.assignSocketAddresses;
+import static io.zeebe.protocol.Protocol.START_PARTITION_ID;
 import static io.zeebe.test.util.TestUtil.doRepeatedly;
 import static io.zeebe.test.util.TestUtil.waitUntil;
 
+import io.atomix.cluster.AtomixCluster;
+import io.atomix.cluster.discovery.BootstrapDiscoveryProvider;
+import io.atomix.utils.net.Address;
 import io.zeebe.broker.Broker;
 import io.zeebe.broker.system.configuration.BrokerCfg;
 import io.zeebe.client.ZeebeClient;
 import io.zeebe.client.api.commands.BrokerInfo;
 import io.zeebe.client.api.commands.PartitionInfo;
-import io.zeebe.client.impl.TopologyImpl;
+import io.zeebe.client.api.commands.Topology;
 import io.zeebe.gateway.Gateway;
-import io.zeebe.gateway.ResponseMapper;
-import io.zeebe.gateway.impl.broker.BrokerClientImpl;
 import io.zeebe.gateway.impl.broker.request.BrokerCreateWorkflowInstanceRequest;
-import io.zeebe.gateway.impl.broker.request.BrokerRequest;
-import io.zeebe.gateway.impl.broker.request.BrokerTopologyRequest;
 import io.zeebe.gateway.impl.broker.response.BrokerResponse;
+import io.zeebe.gateway.impl.configuration.ClusterCfg;
 import io.zeebe.gateway.impl.configuration.GatewayCfg;
-import io.zeebe.protocol.impl.data.cluster.TopologyResponseDto;
-import io.zeebe.protocol.impl.record.value.workflowinstance.WorkflowInstanceRecord;
+import io.zeebe.protocol.impl.record.value.workflowinstance.WorkflowInstanceCreationRecord;
+import io.zeebe.servicecontainer.ServiceName;
 import io.zeebe.test.util.AutoCloseableRule;
 import io.zeebe.test.util.record.RecordingExporterTestWatcher;
-import io.zeebe.transport.ClientResponse;
-import io.zeebe.transport.ClientTransport;
 import io.zeebe.transport.SocketAddress;
-import io.zeebe.transport.Transports;
-import io.zeebe.transport.impl.memory.UnboundedMemoryPool;
 import io.zeebe.transport.impl.util.SocketUtil;
 import io.zeebe.util.FileUtil;
+import io.zeebe.util.sched.clock.ControlledActorClock;
 import java.io.File;
 import java.io.IOException;
-import java.time.Duration;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
@@ -71,6 +70,8 @@ import org.junit.runners.model.Statement;
 
 public class ClusteringRule extends ExternalResource {
 
+  public static final int TOPOLOGY_RETRIES = 250;
+  private static final AtomicLong CLUSTER_COUNT = new AtomicLong(0);
   private static final boolean ENABLE_DEBUG_EXPORTER = false;
 
   protected final RecordingExporterTestWatcher recordingExporterTestWatcher =
@@ -83,17 +84,16 @@ public class ClusteringRule extends ExternalResource {
   private final int replicationFactor;
   private final int clusterSize;
   private final Consumer<BrokerCfg> configurator;
-
-  // cluster
-  private ZeebeClient client;
-  private Gateway gateway;
   private final Map<Integer, Broker> brokers;
   private final Map<Integer, BrokerCfg> brokerCfgs;
   private final Map<Integer, File> brokerBases;
   private final List<Integer> partitionIds;
-
-  // internal
-  private ClientTransport internalTransport;
+  private final String clusterName;
+  private final ControlledActorClock controlledClock = new ControlledActorClock();
+  // cluster
+  private ZeebeClient client;
+  private Gateway gateway;
+  private AtomixCluster atomixCluster;
 
   public ClusteringRule() {
     this(3);
@@ -121,7 +121,12 @@ public class ClusteringRule extends ExternalResource {
     brokers = new HashMap<>();
     brokerCfgs = new HashMap<>();
     brokerBases = new HashMap<>();
-    this.partitionIds = IntStream.range(0, partitionCount).boxed().collect(Collectors.toList());
+    this.partitionIds =
+        IntStream.range(START_PARTITION_ID, START_PARTITION_ID + partitionCount)
+            .boxed()
+            .collect(Collectors.toList());
+
+    clusterName = "zeebe-cluster-" + CLUSTER_COUNT.getAndIncrement();
   }
 
   public int getPartitionCount() {
@@ -157,27 +162,44 @@ public class ClusteringRule extends ExternalResource {
     // create client
     client = createClient();
 
-    // internal transport for requests to specific broker
-    internalTransport =
-        Transports.newClientTransport("cluster-test-client")
-            .messageMaxLength(1024 * 1024)
-            .messageMemoryPool(new UnboundedMemoryPool())
-            .requestMemoryPool(new UnboundedMemoryPool())
-            .scheduler(((BrokerClientImpl) gateway.getBrokerClient()).getScheduler())
-            .build();
+    try {
+      waitUntilBrokersStarted();
+      waitForPartitionReplicationFactor();
+      LOG.info("Full replication factor");
+      waitUntilBrokersInTopology();
+      LOG.info("All brokers in topology {}", getTopologyFromClient());
 
-    waitForPartitionReplicationFactor();
-    waitUntilBrokersInTopology();
+    } catch (Error e) {
+      // If the previous waits timeouts, the brokers are not closed automatically.
+      closables.after();
+      throw e;
+    }
   }
 
-  private Broker getBroker(final int nodeId) {
+  public Broker getBroker(final int nodeId) {
     return brokers.computeIfAbsent(nodeId, this::createBroker);
+  }
+
+  private void waitUntilBrokersStarted() {
+    // A hack to see if Atomix cluster has started
+    brokers.forEach(
+        (i, b) -> {
+          b.getBrokerContext()
+              .getServiceContainer()
+              .createService(ServiceName.newServiceName("test", Void.class), () -> null)
+              .dependency(ATOMIX_JOIN_SERVICE)
+              .install()
+              .join();
+          b.getBrokerContext()
+              .getServiceContainer()
+              .removeService(ServiceName.newServiceName("test", Void.class));
+        });
   }
 
   private Broker createBroker(int nodeId) {
     final File brokerBase = getBrokerBase(nodeId);
     final BrokerCfg brokerCfg = getBrokerCfg(nodeId);
-    final Broker broker = new Broker(brokerCfg, brokerBase.getAbsolutePath(), null);
+    final Broker broker = new Broker(brokerCfg, brokerBase.getAbsolutePath(), controlledClock);
     closables.manage(broker);
     return broker;
   }
@@ -199,10 +221,13 @@ public class ClusteringRule extends ExternalResource {
     DISABLE_EMBEDDED_GATEWAY.accept(brokerCfg);
 
     // configure cluster
-    setCluster(nodeId, partitionCount, replicationFactor, clusterSize).accept(brokerCfg);
+    setCluster(nodeId, partitionCount, replicationFactor, clusterSize, clusterName)
+        .accept(brokerCfg);
     if (nodeId > 0) {
-      setInitialContactPoints(
-              getBrokerCfg(nodeId - 1).getNetwork().getManagement().toSocketAddress().toString())
+      // all nodes have to join the same broker
+      // https://github.com/zeebe-io/zeebe/issues/2012
+
+      setInitialContactPoints(getBrokerCfg(0).getNetwork().getAtomix().toSocketAddress().toString())
           .accept(brokerCfg);
     }
 
@@ -227,15 +252,33 @@ public class ClusteringRule extends ExternalResource {
 
   private Gateway createGateway() {
     final String contactPoint =
-        getBrokerCfg(0).getNetwork().getClient().toSocketAddress().toString();
+        getBrokerCfg(0).getNetwork().getAtomix().toSocketAddress().toString();
 
     final GatewayCfg gatewayCfg = new GatewayCfg();
-    gatewayCfg.getCluster().setContactPoint(contactPoint);
+    gatewayCfg.getCluster().setContactPoint(contactPoint).setClusterName(clusterName);
     gatewayCfg.getNetwork().setPort(SocketUtil.getNextAddress().port());
+    gatewayCfg.getCluster().setPort(SocketUtil.getNextAddress().port());
     gatewayCfg.init();
 
-    final Gateway gateway = new Gateway(gatewayCfg);
+    final ClusterCfg clusterCfg = gatewayCfg.getCluster();
+
+    // copied from StandaloneGateway
+    atomixCluster =
+        AtomixCluster.builder()
+            .withMemberId(clusterCfg.getMemberId())
+            .withAddress(Address.from(clusterCfg.getHost(), clusterCfg.getPort()))
+            .withClusterId(clusterCfg.getClusterName())
+            .withMembershipProvider(
+                BootstrapDiscoveryProvider.builder()
+                    .withNodes(Address.from(clusterCfg.getContactPoint()))
+                    .build())
+            .build();
+
+    atomixCluster.start().join();
+
+    final Gateway gateway = new Gateway(gatewayCfg, atomixCluster);
     closables.manage(gateway::stop);
+    closables.manage(atomixCluster::stop);
     return gateway;
   }
 
@@ -255,25 +298,31 @@ public class ClusteringRule extends ExternalResource {
   }
 
   private void waitUntilBrokersInTopology() {
+
     final Set<SocketAddress> addresses =
-        brokers
-            .values()
-            .stream()
+        brokers.values().stream()
             .map(Broker::getConfig)
             .map(b -> b.getNetwork().getClient().toSocketAddress())
             .collect(Collectors.toSet());
 
     waitForTopology(
         topology ->
-            topology
-                .stream()
+            topology.stream()
                 .map(b -> new SocketAddress(b.getHost(), b.getPort()))
                 .collect(Collectors.toSet())
                 .containsAll(addresses));
   }
 
-  public List<Integer> getPartitionIds() {
-    return partitionIds;
+  public Topology getTopologyFromClient() {
+    return doRepeatedly(
+            () -> {
+              try {
+                return client.newTopologyRequest().send().join();
+              } catch (Exception e) {
+                return null;
+              }
+            })
+        .until(Objects::nonNull);
   }
 
   /**
@@ -293,48 +342,13 @@ public class ClusteringRule extends ExternalResource {
         .get();
   }
 
-  public SocketAddress getLeaderAddressForPartition(final int partition) {
-    final BrokerInfo info = getLeaderForPartition(partition);
-    return new SocketAddress(info.getHost(), info.getPort());
-  }
-
-  public BrokerInfo getFollowerForPartition(final int partitionId) {
-    return doRepeatedly(
-            () -> {
-              final List<BrokerInfo> brokers =
-                  client.newTopologyRequest().send().join().getBrokers();
-              return extractPartitionFollower(brokers, partitionId);
-            })
-        .until(Optional::isPresent)
-        .orElse(null);
-  }
-
-  public SocketAddress getFollowerAddressForPartition(final int partition) {
-    final BrokerInfo info = getFollowerForPartition(partition);
-    return new SocketAddress(info.getHost(), info.getPort());
-  }
-
   private Optional<BrokerInfo> extractPartitionLeader(
       final List<BrokerInfo> brokers, final int partition) {
-    return brokers
-        .stream()
+    return brokers.stream()
         .filter(
             b ->
-                b.getPartitions()
-                    .stream()
+                b.getPartitions().stream()
                     .anyMatch(p -> p.getPartitionId() == partition && p.isLeader()))
-        .findFirst();
-  }
-
-  private Optional<BrokerInfo> extractPartitionFollower(
-      final List<BrokerInfo> brokers, final int partition) {
-    return brokers
-        .stream()
-        .filter(
-            b ->
-                b.getPartitions()
-                    .stream()
-                    .anyMatch(p -> p.getPartitionId() == partition && !p.isLeader()))
         .findFirst();
   }
 
@@ -350,8 +364,7 @@ public class ClusteringRule extends ExternalResource {
     final AtomicLong leaders = new AtomicLong();
     final AtomicLong followers = new AtomicLong();
 
-    brokers
-        .stream()
+    brokers.stream()
         .flatMap(b -> b.getPartitions().stream())
         .forEach(
             p -> {
@@ -379,15 +392,10 @@ public class ClusteringRule extends ExternalResource {
     waitForPartitionReplicationFactor();
   }
 
-  private int nodeId(final Broker broker) {
-    return broker.getConfig().getCluster().getNodeId();
-  }
-
   private void waitUntilBrokerIsAddedToTopology(final SocketAddress socketAddress) {
     waitForTopology(
         topology ->
-            topology
-                .stream()
+            topology.stream()
                 .anyMatch(
                     b ->
                         b.getHost().equals(socketAddress.host())
@@ -401,12 +409,7 @@ public class ClusteringRule extends ExternalResource {
    * @return
    */
   public List<Integer> getBrokersLeadingPartitions(final SocketAddress socketAddress) {
-    return client
-        .newTopologyRequest()
-        .send()
-        .join()
-        .getBrokers()
-        .stream()
+    return client.newTopologyRequest().send().join().getBrokers().stream()
         .filter(
             b -> b.getHost().equals(socketAddress.host()) && b.getPort() == socketAddress.port())
         .flatMap(broker -> broker.getPartitions().stream())
@@ -421,12 +424,7 @@ public class ClusteringRule extends ExternalResource {
    * @return
    */
   public List<SocketAddress> getBrokersInCluster() {
-    return client
-        .newTopologyRequest()
-        .send()
-        .join()
-        .getBrokers()
-        .stream()
+    return client.newTopologyRequest().send().join().getBrokers().stream()
         .map(b -> new SocketAddress(b.getHost(), b.getPort()))
         .collect(Collectors.toList());
   }
@@ -435,23 +433,12 @@ public class ClusteringRule extends ExternalResource {
     return brokers.values();
   }
 
-  public Broker getBroker(final SocketAddress address) {
-    for (final Broker broker : brokers.values()) {
-      if (address.equals(broker.getConfig().getNetwork().getClient().toSocketAddress())) {
-        return broker;
-      }
-    }
-
-    return null;
-  }
-
   public SocketAddress[] getOtherBrokers(final String address) {
     return getOtherBrokers(SocketAddress.from(address));
   }
 
   public SocketAddress[] getOtherBrokers(final SocketAddress address) {
-    return getBrokers()
-        .stream()
+    return getBrokers().stream()
         .map(b -> b.getConfig().getNetwork().getClient().toSocketAddress())
         .filter(a -> !address.equals(a))
         .toArray(SocketAddress[]::new);
@@ -468,13 +455,7 @@ public class ClusteringRule extends ExternalResource {
    * @return
    */
   public long getPartitionLeaderCount() {
-
-    return client
-        .newTopologyRequest()
-        .send()
-        .join()
-        .getBrokers()
-        .stream()
+    return client.newTopologyRequest().send().join().getBrokers().stream()
         .flatMap(broker -> broker.getPartitions().stream())
         .filter(p -> p.isLeader())
         .count();
@@ -488,16 +469,15 @@ public class ClusteringRule extends ExternalResource {
       final List<Integer> brokersLeadingPartitions = getBrokersLeadingPartitions(socketAddress);
       broker.close();
 
-      waitForNewLeaderOfPartitions(brokersLeadingPartitions, socketAddress);
       waitUntilBrokerIsRemovedFromTopology(socketAddress);
+      waitForNewLeaderOfPartitions(brokersLeadingPartitions, socketAddress);
     }
   }
 
   private void waitUntilBrokerIsRemovedFromTopology(final SocketAddress socketAddress) {
     waitForTopology(
         topology ->
-            topology
-                .stream()
+            topology.stream()
                 .noneMatch(
                     b ->
                         b.getHost().equals(socketAddress.host())
@@ -508,8 +488,7 @@ public class ClusteringRule extends ExternalResource {
       final List<Integer> partitions, final SocketAddress oldLeader) {
     waitForTopology(
         topology ->
-            topology
-                .stream()
+            topology.stream()
                 .filter(
                     b -> !(b.getHost().equals(oldLeader.host()) && b.getPort() == oldLeader.port()))
                 .flatMap(broker -> broker.getPartitions().stream())
@@ -521,15 +500,10 @@ public class ClusteringRule extends ExternalResource {
 
   public void waitForTopology(final Function<List<BrokerInfo>, Boolean> topologyPredicate) {
     waitUntil(
-        () ->
-            brokers
-                .values()
-                .stream()
-                .allMatch(
-                    b ->
-                        topologyPredicate.apply(
-                            getTopologyFromBroker(b.getConfig().getCluster().getNodeId()))),
-        250);
+        () -> topologyPredicate.apply(getTopologyFromClient().getBrokers()),
+        TOPOLOGY_RETRIES,
+        "Failed to wait for topology %s",
+        getTopologyFromClient());
   }
 
   public long createWorkflowInstanceOnPartition(int partitionId, String bpmnProcessId) {
@@ -538,7 +512,7 @@ public class ClusteringRule extends ExternalResource {
 
     request.setPartitionId(partitionId);
 
-    final BrokerResponse<WorkflowInstanceRecord> response =
+    final BrokerResponse<WorkflowInstanceCreationRecord> response =
         gateway.getBrokerClient().sendRequest(request).join();
 
     if (response.isResponse()) {
@@ -554,33 +528,8 @@ public class ClusteringRule extends ExternalResource {
     }
   }
 
-  public List<BrokerInfo> getTopologyFromBroker(final int nodeId) {
-    final BrokerTopologyRequest request = new BrokerTopologyRequest();
-    final BrokerResponse<TopologyResponseDto> response = sendRequestToNode(nodeId, request);
-
-    if (response.isResponse()) {
-      final TopologyImpl topology =
-          new TopologyImpl(ResponseMapper.toTopologyResponse(0, response.getResponse()));
-      return topology.getBrokers();
-    } else {
-      return Collections.emptyList();
-    }
-  }
-
-  private <T> BrokerResponse<T> sendRequestToNode(int nodeId, BrokerRequest<T> request) {
-    final BrokerCfg brokerCfg = getBrokerCfg(nodeId);
-    internalTransport.registerEndpointAndAwaitChannel(
-        nodeId, brokerCfg.getNetwork().getClient().toSocketAddress());
-
-    request.serializeValue();
-
-    final ClientResponse response =
-        internalTransport
-            .getOutput()
-            .sendRequestWithRetry(() -> nodeId, b -> false, request, Duration.ofSeconds(5))
-            .join();
-
-    return request.getResponse(response);
+  public AtomixCluster getAtomixCluster() {
+    return atomixCluster;
   }
 
   public SocketAddress getGatewayAddress() {
@@ -589,5 +538,20 @@ public class ClusteringRule extends ExternalResource {
 
   public ZeebeClient getClient() {
     return client;
+  }
+
+  public ControlledActorClock getClock() {
+    return controlledClock;
+  }
+
+  public List<Integer> getPartitionIds() {
+    return partitionIds;
+  }
+
+  public List<Broker> getOtherBrokerObjects(int leaderNodeId) {
+    return brokers.keySet().stream()
+        .filter(id -> id != leaderNodeId)
+        .map(brokers::get)
+        .collect(Collectors.toList());
   }
 }

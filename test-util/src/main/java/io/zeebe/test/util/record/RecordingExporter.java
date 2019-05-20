@@ -15,20 +15,22 @@
  */
 package io.zeebe.test.util.record;
 
-import io.zeebe.exporter.record.Record;
-import io.zeebe.exporter.record.RecordValue;
-import io.zeebe.exporter.record.value.DeploymentRecordValue;
-import io.zeebe.exporter.record.value.IncidentRecordValue;
-import io.zeebe.exporter.record.value.JobBatchRecordValue;
-import io.zeebe.exporter.record.value.JobRecordValue;
-import io.zeebe.exporter.record.value.MessageRecordValue;
-import io.zeebe.exporter.record.value.MessageStartEventSubscriptionRecordValue;
-import io.zeebe.exporter.record.value.MessageSubscriptionRecordValue;
-import io.zeebe.exporter.record.value.RaftRecordValue;
-import io.zeebe.exporter.record.value.TimerRecordValue;
-import io.zeebe.exporter.record.value.WorkflowInstanceRecordValue;
-import io.zeebe.exporter.record.value.WorkflowInstanceSubscriptionRecordValue;
-import io.zeebe.exporter.spi.Exporter;
+import io.zeebe.exporter.api.record.Record;
+import io.zeebe.exporter.api.record.RecordValue;
+import io.zeebe.exporter.api.record.value.DeploymentRecordValue;
+import io.zeebe.exporter.api.record.value.IncidentRecordValue;
+import io.zeebe.exporter.api.record.value.JobBatchRecordValue;
+import io.zeebe.exporter.api.record.value.JobRecordValue;
+import io.zeebe.exporter.api.record.value.MessageRecordValue;
+import io.zeebe.exporter.api.record.value.MessageStartEventSubscriptionRecordValue;
+import io.zeebe.exporter.api.record.value.MessageSubscriptionRecordValue;
+import io.zeebe.exporter.api.record.value.TimerRecordValue;
+import io.zeebe.exporter.api.record.value.VariableDocumentRecordValue;
+import io.zeebe.exporter.api.record.value.VariableRecordValue;
+import io.zeebe.exporter.api.record.value.WorkflowInstanceCreationRecordValue;
+import io.zeebe.exporter.api.record.value.WorkflowInstanceRecordValue;
+import io.zeebe.exporter.api.record.value.WorkflowInstanceSubscriptionRecordValue;
+import io.zeebe.exporter.api.spi.Exporter;
 import io.zeebe.protocol.clientapi.ValueType;
 import io.zeebe.protocol.intent.DeploymentIntent;
 import io.zeebe.protocol.intent.IncidentIntent;
@@ -37,8 +39,9 @@ import io.zeebe.protocol.intent.JobIntent;
 import io.zeebe.protocol.intent.MessageIntent;
 import io.zeebe.protocol.intent.MessageStartEventSubscriptionIntent;
 import io.zeebe.protocol.intent.MessageSubscriptionIntent;
-import io.zeebe.protocol.intent.RaftIntent;
 import io.zeebe.protocol.intent.TimerIntent;
+import io.zeebe.protocol.intent.VariableDocumentIntent;
+import io.zeebe.protocol.intent.VariableIntent;
 import io.zeebe.protocol.intent.WorkflowInstanceIntent;
 import io.zeebe.protocol.intent.WorkflowInstanceSubscriptionIntent;
 import java.time.Duration;
@@ -47,6 +50,10 @@ import java.util.List;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -54,14 +61,19 @@ public class RecordingExporter implements Exporter {
 
   private static final List<Record<?>> RECORDS = new CopyOnWriteArrayList<>();
 
-  private static final Object EXPORT_MONITOR = new Object();
+  private static final Lock LOCK = new ReentrantLock();
+  private static final Condition IS_EMPTY = LOCK.newCondition();
+
   private static final long MAX_WAIT = Duration.ofSeconds(5).toMillis();
 
   @Override
   public void export(final Record record) {
-    RECORDS.add(record);
-    synchronized (EXPORT_MONITOR) {
-      EXPORT_MONITOR.notifyAll();
+    LOCK.lock();
+    try {
+      RECORDS.add(record);
+      IS_EMPTY.signal();
+    } finally {
+      LOCK.unlock();
     }
   }
 
@@ -70,7 +82,12 @@ public class RecordingExporter implements Exporter {
   }
 
   public static void reset() {
-    RECORDS.clear();
+    LOCK.lock();
+    try {
+      RECORDS.clear();
+    } finally {
+      LOCK.unlock();
+    }
   }
 
   @SuppressWarnings("unchecked")
@@ -83,12 +100,11 @@ public class RecordingExporter implements Exporter {
         .map(r -> (Record<T>) r);
   }
 
-  public static RaftRecordStream raftRecords() {
-    return new RaftRecordStream(records(ValueType.RAFT, RaftRecordValue.class));
-  }
-
-  public static RaftRecordStream raftRecords(final RaftIntent intent) {
-    return raftRecords().withIntent(intent);
+  public static RecordStream records() {
+    final Spliterator<Record<? extends RecordValue>> spliterator =
+        Spliterators.spliteratorUnknownSize(new RecordIterator(), Spliterator.ORDERED);
+    return new RecordStream(
+        StreamSupport.stream(spliterator, false).map(r -> (Record<RecordValue>) r));
   }
 
   public static MessageSubscriptionRecordStream messageSubscriptionRecords() {
@@ -183,6 +199,29 @@ public class RecordingExporter implements Exporter {
     return timerRecords().withIntent(intent);
   }
 
+  public static VariableRecordStream variableRecords() {
+    return new VariableRecordStream(records(ValueType.VARIABLE, VariableRecordValue.class));
+  }
+
+  public static VariableRecordStream variableRecords(final VariableIntent intent) {
+    return variableRecords().withIntent(intent);
+  }
+
+  public static VariableDocumentRecordStream variableDocumentRecords() {
+    return new VariableDocumentRecordStream(
+        records(ValueType.VARIABLE_DOCUMENT, VariableDocumentRecordValue.class));
+  }
+
+  public static VariableDocumentRecordStream variableDocumentRecords(
+      final VariableDocumentIntent intent) {
+    return variableDocumentRecords().withIntent(intent);
+  }
+
+  public static WorkflowInstanceCreationRecordStream workflowInstanceCreationRecords() {
+    return new WorkflowInstanceCreationRecordStream(
+        records(ValueType.WORKFLOW_INSTANCE_CREATION, WorkflowInstanceCreationRecordValue.class));
+  }
+
   public static class RecordIterator implements Iterator<Record<?>> {
 
     private int nextIndex = 0;
@@ -193,18 +232,22 @@ public class RecordingExporter implements Exporter {
 
     @Override
     public boolean hasNext() {
-      if (isEmpty()) {
-        // block haven't got enough records yet
-        try {
-          synchronized (EXPORT_MONITOR) {
-            EXPORT_MONITOR.wait(MAX_WAIT);
+      LOCK.lock();
+      try {
+        long now = System.currentTimeMillis();
+        final long endTime = now + MAX_WAIT;
+        while (isEmpty() && endTime > now) {
+          final long waitTime = endTime - now;
+          try {
+            IS_EMPTY.await(waitTime, TimeUnit.MILLISECONDS);
+          } catch (final InterruptedException e) {
           }
-        } catch (final InterruptedException e) {
-          throw new RuntimeException(e);
+          now = System.currentTimeMillis();
         }
+        return !isEmpty();
+      } finally {
+        LOCK.unlock();
       }
-
-      return !isEmpty();
     }
 
     @Override

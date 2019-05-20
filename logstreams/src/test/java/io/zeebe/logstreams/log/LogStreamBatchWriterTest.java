@@ -68,8 +68,6 @@ public class LogStreamBatchWriterTest {
   @Before
   public void setUp() {
     writer = new LogStreamBatchWriterImpl(logStreamRule.getLogStream());
-
-    logStreamRule.setCommitPosition(Long.MAX_VALUE);
   }
 
   private List<LoggedEvent> getWrittenEvents(final long position) {
@@ -119,7 +117,7 @@ public class LogStreamBatchWriterTest {
   @Test
   public void shouldReturnPositionOfSingleEvent() {
     // when
-    final long position = writer.event().positionAsKey().value(EVENT_VALUE_1).done().tryWrite();
+    final long position = writer.event().keyNull().value(EVENT_VALUE_1).done().tryWrite();
 
     // then
     assertThat(position).isGreaterThan(0);
@@ -135,11 +133,11 @@ public class LogStreamBatchWriterTest {
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1)
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2)
             .done()
             .tryWrite();
@@ -158,11 +156,11 @@ public class LogStreamBatchWriterTest {
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1)
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2)
             .done()
             .tryWrite();
@@ -179,11 +177,11 @@ public class LogStreamBatchWriterTest {
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1, 1, 2)
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2, 1, 2)
             .done()
             .tryWrite();
@@ -200,11 +198,11 @@ public class LogStreamBatchWriterTest {
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .key(1)
             .valueWriter(new DirectBufferWriter().wrap(EVENT_VALUE_1))
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .valueWriter(new DirectBufferWriter().wrap(EVENT_VALUE_2))
             .done()
             .tryWrite();
@@ -221,12 +219,12 @@ public class LogStreamBatchWriterTest {
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1)
             .metadata(EVENT_METADATA_1)
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2)
             .metadata(EVENT_METADATA_2)
             .done()
@@ -244,12 +242,12 @@ public class LogStreamBatchWriterTest {
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1)
             .metadata(EVENT_METADATA_1, 1, 2)
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2)
             .metadata(EVENT_METADATA_2, 1, 2)
             .done()
@@ -269,12 +267,12 @@ public class LogStreamBatchWriterTest {
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1)
             .metadataWriter(new DirectBufferWriter().wrap(EVENT_METADATA_1))
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2)
             .metadataWriter(new DirectBufferWriter().wrap(EVENT_METADATA_2))
             .done()
@@ -308,46 +306,17 @@ public class LogStreamBatchWriterTest {
   }
 
   @Test
-  public void shouldWriteEventWithPositionAsKey() {
-    // when
-    final long position =
-        writer
-            .event()
-            .positionAsKey()
-            .value(EVENT_VALUE_1)
-            .done()
-            .event()
-            .positionAsKey()
-            .value(EVENT_VALUE_2)
-            .done()
-            .tryWrite();
-
-    // then
-    final List<LoggedEvent> events = getWrittenEvents(position);
-    final LoggedEvent firstEvent = events.get(0);
-    final long positionEvent1 = firstEvent.getPosition();
-    final LoggedEvent secondEvent = events.get(1);
-    final long positionEvent2 = secondEvent.getPosition();
-
-    assertThat(positionEvent1).isGreaterThan(0);
-    assertThat(positionEvent2).isGreaterThan(0);
-    assertThat(positionEvent1).isLessThan(positionEvent2);
-    assertThat(firstEvent.getKey()).isEqualTo(firstEvent.getPosition());
-    assertThat(secondEvent.getKey()).isEqualTo(secondEvent.getPosition());
-  }
-
-  @Test
   public void shouldWriteEventWithSourceEvent() {
     // when
     final long position =
         writer
             .sourceRecordPosition(123L)
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1)
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2)
             .done()
             .tryWrite();
@@ -365,11 +334,11 @@ public class LogStreamBatchWriterTest {
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1)
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2)
             .done()
             .tryWrite();
@@ -388,11 +357,11 @@ public class LogStreamBatchWriterTest {
         writer
             .producerId(123)
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1)
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2)
             .done()
             .tryWrite();
@@ -409,11 +378,11 @@ public class LogStreamBatchWriterTest {
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .key(1)
             .value(EVENT_VALUE_1)
             .done()
             .event()
-            .positionAsKey()
+            .key(2)
             .value(EVENT_VALUE_2)
             .done()
             .tryWrite();
@@ -433,18 +402,17 @@ public class LogStreamBatchWriterTest {
     // when
     final ActorFuture<Long> position =
         writerScheduler.call(
-            () -> {
-              return writer
-                  .event()
-                  .positionAsKey()
-                  .value(EVENT_VALUE_1)
-                  .done()
-                  .event()
-                  .positionAsKey()
-                  .value(EVENT_VALUE_2)
-                  .done()
-                  .tryWrite();
-            });
+            () ->
+                writer
+                    .event()
+                    .key(1)
+                    .value(EVENT_VALUE_1)
+                    .done()
+                    .event()
+                    .key(2)
+                    .value(EVENT_VALUE_2)
+                    .done()
+                    .tryWrite());
     writerScheduler.workUntilDone();
 
     // then
@@ -454,36 +422,12 @@ public class LogStreamBatchWriterTest {
   }
 
   @Test
-  public void shouldWriteEventWithRaftTerm() {
-    // given
-    logStreamRule.getLogStream().setTerm(123);
-
-    // when
-    final long position =
-        writer
-            .event()
-            .positionAsKey()
-            .value(EVENT_VALUE_1)
-            .done()
-            .event()
-            .positionAsKey()
-            .value(EVENT_VALUE_2)
-            .done()
-            .tryWrite();
-
-    // then
-    assertThat(getWrittenEvents(position))
-        .extracting(LoggedEvent::getRaftTerm)
-        .containsExactly(123, 123);
-  }
-
-  @Test
   public void shouldNotFailToWriteEventWithoutKey() {
     // when
     final long position =
         writer
             .event()
-            .positionAsKey()
+            .keyNull()
             .value(EVENT_VALUE_1)
             .done()
             .event()
@@ -499,17 +443,8 @@ public class LogStreamBatchWriterTest {
   public void shouldFailToWriteEventWithoutValue() {
     // when
     assertThatThrownBy(
-            () -> {
-              writer
-                  .event()
-                  .positionAsKey()
-                  .value(EVENT_VALUE_1)
-                  .done()
-                  .event()
-                  .positionAsKey()
-                  .done()
-                  .tryWrite();
-            })
+            () ->
+                writer.event().key(1).value(EVENT_VALUE_1).done().event().key(2).done().tryWrite())
         .isInstanceOf(RuntimeException.class)
         .hasMessage("value must not be null");
   }

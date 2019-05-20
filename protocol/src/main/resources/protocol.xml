@@ -20,19 +20,18 @@
 
     <enum name="errorCode" encodingType="uint8" semanticType="String"
       description="The error code of an error">
-      <validValue name="MESSAGE_NOT_SUPPORTED">0</validValue>
-      <validValue name="PARTITION_NOT_FOUND">1</validValue>
-      <validValue name="REQUEST_WRITE_FAILURE">2</validValue>
+      <validValue name="INTERNAL_ERROR">0</validValue>
+      <validValue name="PARTITION_LEADER_MISMATCH">1</validValue>
+      <validValue name="UNSUPPORTED_MESSAGE">2</validValue>
       <validValue name="INVALID_CLIENT_VERSION">3</validValue>
-      <validValue name="REQUEST_TIMEOUT">4</validValue>
-      <validValue name="REQUEST_PROCESSING_FAILURE">5</validValue>
-      <validValue name="INVALID_MESSAGE">6</validValue>
-      <validValue name="NOT_FOUND">7</validValue>
+      <validValue name="MALFORMED_REQUEST">4</validValue>
+      <validValue name="INVALID_MESSAGE_TEMPLATE">5</validValue>
+      <validValue name="INVALID_DEPLOYMENT_PARTITION">6</validValue>
+      <validValue name="WORKFLOW_NOT_FOUND">7</validValue>
     </enum>
 
     <enum name="ValueType" encodingType="uint8" description="The type of a record value">
       <validValue name="JOB">0</validValue>
-      <validValue name="RAFT">1</validValue>
       <validValue name="DEPLOYMENT">4</validValue>
       <validValue name="WORKFLOW_INSTANCE">5</validValue>
       <validValue name="INCIDENT">6</validValue>
@@ -44,13 +43,10 @@
       <validValue name="JOB_BATCH">14</validValue>
       <validValue name="TIMER">15</validValue>
       <validValue name="MESSAGE_START_EVENT_SUBSCRIPTION">16</validValue>
-    </enum>
-
-    <enum name="ControlMessageType" encodingType="uint8"
-      description="The type of the control message.">
-      <validValue name="REQUEST_TOPOLOGY">4</validValue>
-      <validValue name="GET_WORKFLOW">5</validValue>
-      <validValue name="LIST_WORKFLOWS">6</validValue>
+      <validValue name="VARIABLE">17</validValue>
+      <validValue name="VARIABLE_DOCUMENT">18</validValue>
+      <validValue name="WORKFLOW_INSTANCE_CREATION">19</validValue>
+      <validValue name="ERROR">20</validValue>
     </enum>
 
     <enum name="RecordType" encodingType="uint8">
@@ -60,12 +56,11 @@
     </enum>
 
     <enum name="RejectionType" encodingType="uint8">
-      <!-- Command contains a value that is not allowed/cannot be processed -->
-      <validValue name="BAD_VALUE">0</validValue>
-      <!-- Command is not applicable in current state of addressed state machine -->
-      <validValue name="NOT_APPLICABLE">1</validValue>
-      <!-- Command could not be processed for broker-internal reasons -->
-      <validValue name="PROCESSING_ERROR">2</validValue>
+      <validValue name="INVALID_ARGUMENT">0</validValue>
+      <validValue name="NOT_FOUND">1</validValue>
+      <validValue name="ALREADY_EXISTS">2</validValue>
+      <validValue name="INVALID_STATE">3</validValue>
+      <validValue name="PROCESSING_ERROR">4</validValue>
     </enum>
   </types>
 
@@ -74,17 +69,6 @@
   <sbe:message name="ErrorResponse" id="0" description="Standard error response">
     <field name="errorCode" id="1" type="errorCode"/>
     <data name="errorData" id="2" type="varDataEncoding"/>
-  </sbe:message>
-
-  <sbe:message name="ControlMessageRequest" id="10">
-    <field name="messageType" id="1" type="ControlMessageType"/>
-    <!-- Optional: Needs only be set if request addresses a specific partition -->
-    <field name="partitionId" id="2" type="uint16" presence="optional"/>
-    <data name="data" id="3" type="varDataEncoding"/>
-  </sbe:message>
-
-  <sbe:message name="ControlMessageResponse" id="11">
-    <data name="data" id="1" type="varDataEncoding"/>
   </sbe:message>
 
   <sbe:message name="ExecuteCommandRequest" id="20">
